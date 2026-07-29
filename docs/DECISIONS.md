@@ -273,6 +273,100 @@ focus on few things per daypart and expects to get exhausted otherwise.
 This supersedes the original reading of D6: ballast is **opt-in per daypart**, not the
 default behaviour.
 
+### D22 — "Ballast" is deleted as a concept
+
+Earlier rounds treated criteria-less habits (read a book, brain game) as a special
+scheduler category that auto-fills leftover time. The user rejected this framing:
+**they decide what is active.** If an activated habit finds no room in any daypart,
+that is simply a capacity fact, not a scheduling special case.
+
+So there is no ballast mechanism. An untracked habit is an ordinary goal that happens
+to have no verdict layer (D5). It is activated by the user, occupies a slot in the
+active-goal cap (D11), and competes like everything else. One fewer concept to build.
+
+### D23 — The stage is the unit of scheduling, not the goal
+
+Every goal has **one or more stages**. Most goals have exactly one (hair care, gym,
+reading) and the stage is invisible in the UI. Some have several (GATE: syllabus →
+revision → test series; DSA similarly).
+
+Duration, daypart eligibility, cadence and progress unit all live on the **stage**
+(extends D19b). A single-stage goal is the ordinary case, not a special case, so the
+same machinery serves both and nothing branches.
+
+**Other goals with genuine stage structure**, for validation:
+
+| Goal | Stages | Why the last stage must be protected |
+|---|---|---|
+| Marathon | base → build → **taper** | Skipping taper means racing exhausted |
+| IELTS / language | vocab+grammar → conversation → mock tests | Untested fluency fails on the day |
+| Job hunt | skills → portfolio → applications → interview prep | Applying with nothing built wastes the window |
+| Interview DSA | learn patterns → topic practice → **timed mocks** | Untimed practice doesn't transfer |
+| Writing | draft → revise → edit | An unedited draft isn't publishable |
+| Driving test | lessons → solo practice → test |  |
+
+The shared shape: **a fixed external date, and a late phase that is non-negotiable but
+gets eaten by an early phase that expands.** Marathon taper is the clearest non-exam
+case — it is the same failure as skipping revision.
+
+### D24 — Stage deadlines are derived backwards, and scope is the release valve
+
+The user's constraint: *"we can't just keep doing syllabus without caring about
+revision and tests... maybe we can drop chapters or even subjects, but what's
+necessary is necessary."*
+
+So each stage carries **its own deadline**, computed **backwards from the final date**:
+
+```
+exam date
+  └─ test series needs 60h  → must start by  <date>
+       └─ revision needs 35h → must start by  <date>
+            └─ therefore syllabus must FINISH by <date>
+```
+
+Late stages are protected. Early stages absorb the pressure. When the syllabus cannot
+fit before its derived deadline, the app does **not** silently let it run over and eat
+revision — it reports a **scope gap**: *"you are ~40 hours over; something has to be
+cut."* Cutting scope is the release valve, and the app's job is to make the gap
+visible early enough that cutting is still a choice rather than a casualty.
+
+### D25 — The ideal line is a requirement; the actual line is measured
+
+Resolves the day-one-predictability vs false-hope tension. The two lines on the chart
+have completely different origins:
+
+- **Required line** — pure arithmetic from scope, capacity and the date. Exists on
+  **day one**, needs zero data, and is never a guess. *"8.2 hours per chapter."*
+- **Actual line** — measured from logged sessions (D17). Starts empty, grows daily.
+
+"Am I on track" = is the actual line above or below the required line. **That is
+meaningful from the very first logged session** — one data point is enough to compare
+against a requirement, though not enough to predict a finish date.
+
+Prediction is layered on top only once data supports it, and is shown **as a range
+that visibly narrows**, never as a confident point:
+
+| | Shown |
+|---|---|
+| Day 1 | "You need 8.2 h/chapter. No pace data yet." |
+| Day 14 | "Measured 6.7 h/chapter (3 chapters). Finish ≈ Jan 12, ±3 weeks." |
+| Day 60 | "Finish ≈ Jan 4, ±5 days." |
+
+The widening/narrowing band *is* the honesty mechanism. No invented confidence.
+
+### D26 — Cadence supports frequency, fixed days, or both
+
+Modelled on what the user already uses for training. A stage's cadence may be:
+
+- **frequency only** — "4×/week, any days" → scheduler chooses (and D9 scarcity applies)
+- **fixed days** — "Mon / Wed / Fri" → scheduler must honour
+- **hybrid** — "4×/week, one must be Sunday"
+
+Plus recovery constraints (D20): a hard **maximum per week**, and optionally a
+**minimum rest gap** between sessions. The user expects to switch from fixed-days to
+frequency-only when they join a gym, so both must be first-class and swappable
+without recreating the goal.
+
 ---
 
 ## Scheduler design (proposed, being refined)
@@ -306,8 +400,12 @@ Coefficients deliberately unfixed; tuned once the app is in real use.
 - **O5 — Short slots.** 30 minutes free, DSA's box is 60. Excluded, or is there an
   optional minimum-viable-session?
 - **O6 — Tech stack.** Not discussed. Belongs to `Architecture.md`.
-- ~~O7 — Ballast vs exhaustion~~ → resolved: ballast opt-in per daypart (D6 revised, D21).
-- **O8 — Cold start.** What the app shows during the first ~2 weeks, before measured
-  pace exists (D17).
+- ~~O7 — Ballast vs exhaustion~~ → dissolved by **D22**; there is no ballast.
+- ~~O8 — Cold start~~ → resolved by **D25**.
 - **O9 — Stage transitions.** Does the user manually advance a goal from syllabus to
-  revision to test series (D18), or is it inferred from checkpoints?
+  revision to test series, or is it inferred when the checkpoint reaches the last unit?
+- **O10 — Scope cutting.** When D24 reports a scope gap, does the app need per-unit
+  importance (essential vs droppable chapters) to *recommend* what to cut, or does it
+  only name the size of the gap and leave the choice entirely to the user?
+- **O11 — Stage deadline hardness.** Is a derived stage deadline advisory, or does
+  crossing it force a decision before the app will keep scheduling that stage?
