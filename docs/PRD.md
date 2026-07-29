@@ -1,6 +1,6 @@
 # my-time — Product Requirements
 
-**Status:** draft for review. Scope in §6 is a proposal, not yet signed off.
+**Status:** v1 scope signed off (§8). Next document: `Architecture.md`.
 **Source of truth for decisions:** [`DECISIONS.md`](./DECISIONS.md) — every `D-number`
 below refers to a decision recorded there, with its reasoning.
 
@@ -110,7 +110,7 @@ set by the user in settings. Goals beyond it wait in a **future/planned** state.
 ## 6. Features
 
 Marked **[v1]** for the first usable build and **[later]** for deferred work.
-This split is a proposal — see §8.
+Deferred items are **designed, not dropped** — see §8 and D29.
 
 ### 6.1 Goals
 

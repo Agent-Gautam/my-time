@@ -3,7 +3,7 @@
 Running record of design decisions made during discussion, before any code exists.
 Appended each round. `PRD.md`, `Architecture.md` etc. get written *from* this file.
 
-**Status:** PRD discussion in progress. Nothing built yet.
+**Status:** PRD complete and signed off. `Architecture.md` next. Nothing built yet.
 
 ---
 
