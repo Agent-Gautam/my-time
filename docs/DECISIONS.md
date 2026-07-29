@@ -76,12 +76,18 @@ Not rigid goal types. Behavior falls out of which fields are filled in:
 | \+ measurable metric | Trend, early read on the verdict (weight, chapters) |
 | \+ countable total + deadline | Full pace projection |
 
-### D6 — Goals with no acceptance criteria still belong
+### D6 — Goals with no acceptance criteria still belong *(revised — see D21)*
 
 Their purpose is to keep the user occupied and feeling like they improved that day.
 The scheduler decides when they surface. Structurally they act as **ballast** — short,
-always eligible, no urgency, used to fill leftover time. They can never displace a
-goal that is behind, but they stop a slot going empty.
+always eligible, no urgency, usable to fill leftover time. They can never displace a
+goal that is behind.
+
+**Revision:** this was written when the user framed untracked habits as "keeping
+myself busy and motivated." They have since said they want to focus on *few* things
+per daypart and expect to get exhausted. The risk is over-filling, not under-filling.
+So **ballast is off by default and opt-in per daypart** — leftover time stays free
+unless the user asks for it to be used.
 
 ### D7 — Four dayparts, user-defined, with per-goal eligibility
 
@@ -207,15 +213,36 @@ size, its own natural unit, and its own best estimation method:
 Projection is the sum over stages. Mixing estimation methods per stage is correct;
 forcing one method across the whole goal is not.
 
-### D19 — The app computes the required rate backwards
+### D19 — The app computes the required rate backwards, budget-first
 
 The user asked "is 2 hours a day the right amount for GATE?" The more useful question
-is its inverse, and it is answerable immediately: given the work and the date,
-**you need X hours per week.** Compare X against real available capacity.
+is its inverse: given the work and the date, **you need X hours per week.**
 
-If required > capacity, the plan is impossible and the app can say so **on day one** —
-before months are invested. This is arguably the single most valuable output of the
-whole system, and it is arithmetic.
+Naively this collides with D17 — measured pace needs ~2 weeks, so a day-one verdict
+looks impossible. D18 resolves it: **the estimable stages carry day-one feasibility.**
+
+Day one, with zero measurement:
+
+```
+total budget      = daily hours × days to exam        (2h × 170d = 340h)
+known stages      = test series, countable            (20 × 3h    =  60h)
+                  + revision, fraction of syllabus    (est.       =  35h)
+remaining for syllabus                                            = 245h
+```
+
+That is a real, actionable statement made before a single session is logged. If the
+known stages alone exceed the budget, the plan is **already impossible** and the app
+says so immediately — before months are invested.
+
+Measurement then *tightens* the estimate rather than creating it: after two weeks of
+syllabus pace, the app can say whether 245 hours is actually enough. Projection
+starts coarse and sharpens; it never starts from nothing.
+
+### D19b — Session duration belongs to the stage, not the goal
+
+D12 fixes a time-box per task, but GATE's test series runs 3 hours per session while
+its syllabus sessions are 60 minutes. Same goal, different stage, different box.
+Duration, and therefore daypart eligibility, are **stage-level** properties.
 
 ### D20 — Missed sessions die officially; catch-up is voluntary and credited
 
@@ -243,8 +270,8 @@ length of the daypart (time). If free time remains after laying out active goals
 The app must never nag the user to fill capacity. Stated reason: the user wants to
 focus on few things per daypart and expects to get exhausted otherwise.
 
-**Open tension with D6:** ballast (untracked habits filling leftover slots) partly
-contradicts this. Ballast likely needs to be opt-in, or capped per daypart.
+This supersedes the original reading of D6: ballast is **opt-in per daypart**, not the
+default behaviour.
 
 ---
 
@@ -279,8 +306,7 @@ Coefficients deliberately unfixed; tuned once the app is in real use.
 - **O5 — Short slots.** 30 minutes free, DSA's box is 60. Excluded, or is there an
   optional minimum-viable-session?
 - **O6 — Tech stack.** Not discussed. Belongs to `Architecture.md`.
-- **O7 — Ballast vs exhaustion.** D6 fills leftover time with untracked habits; D21
-  says free time stays free and the user expects exhaustion. Needs reconciling.
+- ~~O7 — Ballast vs exhaustion~~ → resolved: ballast opt-in per daypart (D6 revised, D21).
 - **O8 — Cold start.** What the app shows during the first ~2 weeks, before measured
   pace exists (D17).
 - **O9 — Stage transitions.** Does the user manually advance a goal from syllabus to
