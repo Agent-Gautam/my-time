@@ -187,8 +187,8 @@ This split is a proposal — see §8.
   Nothing is dragged forward as debt. (D20)
 - **[v1]** Voluntary catch-up: do it on your own whenever you like, and the app
   records it and **credits it against the ideal line**. (D20)
-- **[later]** Coarse progress checkpoint — *"which chapter are you on?"* — asked
-  occasionally, never per video or per question. (D13)
+- **[v1]** Coarse progress checkpoint — *"which chapter are you on?"* — asked
+  occasionally, never per video or per question. (D13, D28)
 
 ### 6.7 Tracking and predictability
 
@@ -199,22 +199,24 @@ There are two different "on track" questions and they need different inputs:
 | Question | Needs | v1? |
 |---|---|---|
 | *"Am I keeping my commitments this week?"* | cadence only | **yes** |
-| *"Will I reach my target date?"* | scope, units, stages | **no** |
+| *"Will I reach my target date?"* | scope + units | **yes** (D28) |
+| *"Is my syllabus eating my revision?"* | multi-stage machinery | **no** |
 
 For a cadence goal, on-track needs no scope whatsoever — *"4×/week, you've done 2,
 it's Thursday"* is complete information. **Cadence debt is the required-vs-actual
 comparison for every single-stage goal, and every single-stage goal is in v1.**
 
-But *"will I finish the GATE syllabus in time"* needs a unit count and progress
-checkpoints, both of which are deferred below. **v1 therefore says nothing about
-target dates.** See §8 — this is the open scope decision.
+*"Will I finish the GATE syllabus in time"* additionally needs a unit count and
+progress checkpoints. **Both are in v1** (§8, Option B), so v1 answers this too — for
+the goals that have scope. It still does **not** do multi-stage deadlines or scope-gap
+reporting.
 
 - **[v1]** **Cadence-based required line** — from the protocol alone. Available
   immediately, needs zero setup, never a guess. (D25)
 - **[v1]** **Actual line** — from logged sessions. On-track = actual vs required,
   meaningful from the first logged session.
-- **[later]** **Scope-based required line** — hours-per-unit against a target date.
-  Needs a unit count and the coarse checkpoint (§6.6). (D25)
+- **[v1]** **Scope-based required line** — hours-per-unit against a target date.
+  Needs a unit count and the coarse checkpoint (§6.6). (D25, D28)
 - **[later]** **Measured-pace projection** — learns hours-per-unit from real sessions
   and projects a finish date **as a narrowing range**, never a point. Requires ~2 weeks
   of data, so it can ship after v1 without the user ever noticing a gap. (D17, D25)
@@ -242,34 +244,25 @@ Stated explicitly so the boundary is defensible.
 - **Mobile native app.** Later, if ever.
 - **AI-generated goal suggestions or plans.** The user brings the goals.
 
-## 8. Open for sign-off
+## 8. Sign-off — settled
 
-### 8.1 The v1 scope decision — target dates, in or out?
-
-The author's stated motivation is **predictability**, and GATE is the live case. But
-target-date prediction needs scope data that §6 defers. Two options:
-
-**A — ship lean.** v1 answers *"am I keeping my commitments this week?"* for every
-goal, and nothing about target dates. Fastest to a usable build. Risk: the exam — the
-thing that actually prompted this app — gets no answer for weeks.
-
-**B — pull minimum scope into v1.** Add a **unit count** per goal and the **coarse
-weekly checkpoint** (§6.6), without any multi-stage machinery. That is one number
-field and one dropdown, and it buys a real required-vs-actual line against a target
-date for the goals that need one. Small addition, directly serves the stated purpose.
-
-**Recommendation: B.** The cost is genuinely small and it delivers the feature the app
-was conceived for. Full stages, backwards-derived stage deadlines and scope-gap
-reporting stay deferred either way.
-
-### 8.2 Also open
-
-- **Stage deadline hardness (O11).** Advisory, or blocking?
-- **Backlog promotion (O2).** Automatic or user-chosen when a slot frees up?
+- **v1 scope: Option B.** A unit count per goal plus the coarse weekly checkpoint are
+  **in v1**, without multi-stage machinery. Scope tracking passed the author's test
+  ("nothing designed for only one or two goals") — it covers learning goals and
+  measurable-metric goals alike, roughly half a typical set, and the field is optional
+  so cadence-only goals are unaffected. (D28)
+- **Stage deadlines are advisory.** Passing one informs; it never blocks. The user
+  decides when to advance, since work may remain in the previous stage. (D30)
+- **Backlog promotion is manual**, but free capacity is **always visible** — show the
+  fact ("evening: 2 of 3 slots used"), never prompt the action. (D31)
+- **Rescheduling needs no infrastructure.** Re-layout is a deterministic pure function
+  over a tiny dataset; it recomputes synchronously, debounced. The real constraints
+  are that the past is immutable and that re-layout must minimise churn. (D32)
 
 ## 9. What "done" looks like for v1
 
 The author uses it daily, without prompting, for two consecutive weeks — and can
-answer **"am I keeping my commitments?"** for every active goal in under ten seconds.
+answer **both** questions for every active goal in under ten seconds:
 
-Whether *"will I make it to the exam?"* is also answerable depends on §8.1.
+- *"Am I keeping my commitments?"* — from cadence, for every goal.
+- *"Will I reach my target date?"* — from scope, for the goals that have one.

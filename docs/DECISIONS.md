@@ -106,7 +106,9 @@ reality arrives:
 1. User checks in. Usually on time; sometimes not.
 2. If time is short, the algorithm drops tasks **from that daypart only**.
 3. Dropped tasks are re-placed elsewhere — the scheduler may need to recompute
-   broadly. Runs as a **background job** to avoid UI stalls.
+   broadly. ~~Runs as a **background job** to avoid UI stalls.~~
+   **Superseded by D32:** re-layout is a fast pure function and runs synchronously.
+   No background job, no queue.
 
 The check-in surface must state:
 - total time required to complete everything in this daypart
@@ -380,6 +382,74 @@ without recreating the goal.
   is shorter than the box, the session is simply not scheduled. No minimum-viable
   session, no divisible packing.
 
+### D28 — Scope tracking is a general capability, not a GATE special case
+
+The user's test: *"I would not need anything that is only designed for one or two
+goals."* Scope passes it. Countable scope applies to an entire category — learning
+goals (syllabus, courses, playlists, books, lessons) and measurable-metric goals
+(weight 70→73kg is the same arithmetic with a different unit). Roughly half a typical
+goal set.
+
+The field is **optional** (D5 progressive depth), so cadence-only goals — skincare,
+gym, meditation — are unaffected. v1 therefore includes a unit count plus the coarse
+weekly checkpoint (PRD §8.1, Option B).
+
+### D29 — Schema-complete from day one; v1 → v2 must not churn
+
+User constraint: *"if we completed v1 and want to implement v2 instantly, that should
+be smooth — we won't be changing the UI and schema again and again."*
+
+So the database schema models the **full decided design** from the first commit —
+stages, cycles, verdicts, checkpoints — even where v1 leaves tables unused or holding
+exactly one implicit row. Deferred features are **gated, not absent from the model.**
+UI is composed so later features slot into existing surfaces.
+
+**Honest caveat:** designing a schema for unbuilt features usually gets something
+wrong. Mitigation — the schema covers only decisions *already made* here (D1–D28,
+which is a lot). Genuinely new ideas may still require migration, and that is
+accepted. This buys smoothness for the known roadmap, not for everything.
+
+### D30 — Stage deadlines are advisory, never blocking
+
+A stage deadline passing does not stop anything. The app **informs**; the user decides
+whether to advance, because they may have items left in the previous stage. Consistent
+with manual stage advance (D27) and with D15 — inform, never punish.
+
+### D31 — Backlog promotion is manual, but free capacity stays visible
+
+No auto-promotion when a slot frees. The user activates a planned goal themselves.
+
+But free slots must be **persistently visible** — *"keep it in my eyes always so I
+know there is a free slot."* The line against D21's no-nagging rule:
+
+- **Show the fact** — "evening: 2 of 3 slots used." Always visible. Correct.
+- **Never prompt the action** — no "add a goal!", no badge, no empty-state guilt.
+
+### D32 — Re-layout is a pure function; the real risk is churn, not concurrency
+
+Many events trigger rescheduling: a missed session, activating or deactivating a goal,
+editing cadence, a changed daypart boundary, a checkpoint update.
+
+This is **not a concurrency problem.** Single user, tiny dataset (~15 goals, ~100
+sessions/week), and layout is deterministic: `(goals, caps, dayparts, history, today)
+→ week plan`. Therefore:
+
+- **Recompute, never patch.** Regenerate the plan from inputs; do not incrementally
+  mutate it. Idempotent by construction, so racing recomputes are harmless — the last
+  one wins and produces the same answer.
+- **Debounce.** Several changes within a few seconds collapse into one recompute.
+- **Synchronous is fine.** At this data size layout runs in milliseconds. **This
+  supersedes D8's "background job"**, which was premature optimisation. No queue, no
+  worker, no extra infrastructure. Manual reconciliation is not needed.
+
+The two constraints that *do* matter:
+
+- **The past is immutable.** Re-layout may only regenerate *future* slots. Logged
+  sessions are facts and are never rewritten.
+- **Minimise churn.** If a trivial change reshuffles a day the user has already read,
+  the plan stops feeling trustworthy. Re-layout must **prefer existing placements** and
+  change only what it must. Stability is a feature, not an optimisation.
+
 ---
 
 ## Scheduler design (proposed, being refined)
@@ -404,18 +474,16 @@ Coefficients deliberately unfixed; tuned once the app is in real use.
 ## Open questions
 
 - ~~O1 — Planning horizon~~ → resolved by **D16**.
-- **O2 — Backlog promotion.** When an active goal ends, is the next goal promoted
-  automatically or does the user choose? Can a parked goal carry a "not before" date?
+- ~~O2 — Backlog promotion~~ → resolved by **D31** (manual, capacity always visible).
 - **O3 — Data entry** (largely addressed by D12/D13/D17). Confirmed principle: the
   user should never face a blank form; logging is confirming a prompt the app already
   made.
 - ~~O4 — Rescheduling scope~~ → resolved by **D20**.
 - ~~O5 — Short slots~~ → resolved by **D27**.
-- **O6 — Tech stack.** Not discussed. Belongs to `Architecture.md`.
+- **O6 — Tech stack.** Belongs to `Architecture.md` — next up.
 - ~~O7 — Ballast vs exhaustion~~ → dissolved by **D22**; there is no ballast.
 - ~~O8 — Cold start~~ → resolved by **D25**.
 - ~~O9 — Stage transitions~~ → resolved by **D27**.
 - ~~O10 — Scope cutting~~ → resolved by **D27**.
-- **O11 — Stage deadline hardness.** Is a derived stage deadline advisory, or does
-  crossing it force a decision before the app will keep scheduling that stage?
-- **O12 — v1 scope.** Proposed in `PRD.md`; needs sign-off. Detailed in `Phases.md`.
+- ~~O11 — Stage deadline hardness~~ → resolved by **D30** (advisory).
+- ~~O12 — v1 scope~~ → resolved: Option B (D28). Detailed in `Phases.md`.
