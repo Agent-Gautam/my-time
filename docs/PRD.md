@@ -137,6 +137,12 @@ This split is a proposal — see §8.
 
 ### 6.3 Stages
 
+> **Architectural constraint for v1.** Even though multi-stage goals are deferred, v1
+> **builds the stage table**, with exactly one implicit stage per goal. Duration,
+> cadence and daypart eligibility live there from the very first commit (D19b, D23).
+> The UI hides the concept entirely. This costs nothing now and means multi-stage
+> support is an additive feature rather than a data migration.
+
 - **[later]** Multiple stages per goal, each with its own duration, cadence,
   eligibility and progress unit. (D23)
 - **[later]** Stage deadlines **derived backwards** from the final date, so late
@@ -154,6 +160,9 @@ This split is a proposal — see §8.
 - **[v1]** **Scarcity-first placement** — a stage with fewer eligible dayparts is
   placed before one with more. Yoga claims the morning before meditation, which has an
   evening to fall back on. (D9)
+  > Layout is the single hardest thing in v1 — caps, eligibility, cadence, recovery
+  > limits and scarcity ordering all interact. `Phases.md` must sequence it **early**,
+  > not last.
 - **[v1]** **Reconcile** — at check-in, adapt the day's plan to the time actually
   available. Local and instant. (D8)
 - **[later]** Full background re-layout after reconciliation, to quietly improve the
@@ -183,10 +192,29 @@ This split is a proposal — see §8.
 
 ### 6.7 Tracking and predictability
 
-- **[v1]** **Required line** — arithmetic from scope, capacity and date. Available on
-  day one, needs zero history, never a guess. (D25)
-- **[v1]** **Actual line** — measured from logged sessions. On-track status is simply
-  actual vs required, meaningful from the first logged session.
+**What v1 can and cannot answer — read this carefully.**
+
+There are two different "on track" questions and they need different inputs:
+
+| Question | Needs | v1? |
+|---|---|---|
+| *"Am I keeping my commitments this week?"* | cadence only | **yes** |
+| *"Will I reach my target date?"* | scope, units, stages | **no** |
+
+For a cadence goal, on-track needs no scope whatsoever — *"4×/week, you've done 2,
+it's Thursday"* is complete information. **Cadence debt is the required-vs-actual
+comparison for every single-stage goal, and every single-stage goal is in v1.**
+
+But *"will I finish the GATE syllabus in time"* needs a unit count and progress
+checkpoints, both of which are deferred below. **v1 therefore says nothing about
+target dates.** See §8 — this is the open scope decision.
+
+- **[v1]** **Cadence-based required line** — from the protocol alone. Available
+  immediately, needs zero setup, never a guess. (D25)
+- **[v1]** **Actual line** — from logged sessions. On-track = actual vs required,
+  meaningful from the first logged session.
+- **[later]** **Scope-based required line** — hours-per-unit against a target date.
+  Needs a unit count and the coarse checkpoint (§6.6). (D25)
 - **[later]** **Measured-pace projection** — learns hours-per-unit from real sessions
   and projects a finish date **as a narrowing range**, never a point. Requires ~2 weeks
   of data, so it can ship after v1 without the user ever noticing a gap. (D17, D25)
@@ -216,13 +244,32 @@ Stated explicitly so the boundary is defensible.
 
 ## 8. Open for sign-off
 
-- **v1 scope (§6).** The full model is large; this split defers stages, verdict
-  cycles and projection so a genuinely usable build lands fast. Deferred items are
-  designed, not dropped. **Needs approval or adjustment.**
+### 8.1 The v1 scope decision — target dates, in or out?
+
+The author's stated motivation is **predictability**, and GATE is the live case. But
+target-date prediction needs scope data that §6 defers. Two options:
+
+**A — ship lean.** v1 answers *"am I keeping my commitments this week?"* for every
+goal, and nothing about target dates. Fastest to a usable build. Risk: the exam — the
+thing that actually prompted this app — gets no answer for weeks.
+
+**B — pull minimum scope into v1.** Add a **unit count** per goal and the **coarse
+weekly checkpoint** (§6.6), without any multi-stage machinery. That is one number
+field and one dropdown, and it buys a real required-vs-actual line against a target
+date for the goals that need one. Small addition, directly serves the stated purpose.
+
+**Recommendation: B.** The cost is genuinely small and it delivers the feature the app
+was conceived for. Full stages, backwards-derived stage deadlines and scope-gap
+reporting stay deferred either way.
+
+### 8.2 Also open
+
 - **Stage deadline hardness (O11).** Advisory, or blocking?
 - **Backlog promotion (O2).** Automatic or user-chosen when a slot frees up?
 
 ## 9. What "done" looks like for v1
 
 The author uses it daily, without prompting, for two consecutive weeks — and can
-answer *"am I on track?"* for every active goal in under ten seconds.
+answer **"am I keeping my commitments?"** for every active goal in under ten seconds.
+
+Whether *"will I make it to the exam?"* is also answerable depends on §8.1.
