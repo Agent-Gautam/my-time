@@ -161,6 +161,91 @@ Skipping moves the required rate (0.75/day → 1.0/day) and the app reports the 
 number calmly, or states plainly that the target is no longer reachable this window
 and offers to reduce or extend. No streaks to break, no red.
 
+### D16 — Two horizons, deliberately different
+
+The tension: weekly layout is cheap, but weekly-only means the app can never say
+whether you'll make it to an exam three months out. Resolved by separating them:
+
+- **Layout horizon — one rolling week.** Concrete sessions placed into real dayparts.
+  Materialized a day at a time. Planning specific sessions weeks out is fiction.
+- **Projection horizon — all the way to the deadline or review date.** Pure
+  arithmetic, no session placement: `work_remaining ÷ weekly_capacity` vs `weeks_left`.
+
+You do not need to schedule ninety specific days to know whether ninety days is
+enough. The ideal-vs-real comparison therefore has two resolutions: fine-grained
+adherence for this week, and a coarse projection line to the horizon.
+
+### D17 — Estimate by measurement, not by upfront guessing
+
+The user must never sit down and total up video lengths, practice time, re-watch
+buffer, and revision time. That is hours of work and the result is wrong anyway.
+
+Instead the app **measures the user's actual rate** from logged sessions and coarse
+checkpoints (D13): "3 chapters completed across 14 sessions → 4.7 sessions/chapter."
+Project the remaining chapters at the observed rate.
+
+Properties:
+- Zero setup burden.
+- Uses the user's real pace — already includes their re-watching and their slow days.
+- Self-correcting; accuracy improves every week.
+- **Cost:** no projection is possible for roughly the first two weeks. The app must
+  say so honestly ("learning your pace") rather than invent a number. A day-one
+  projection would be fiction regardless of how it was produced.
+
+An optional rough upfront estimate may serve as a starting prior, superseded by
+measurement as soon as enough data exists.
+
+### D18 — Large goals have sequential stages
+
+GATE is not one thing: **syllabus → revision → test series**. Each stage has its own
+size, its own natural unit, and its own best estimation method:
+
+- syllabus — uncertain, *measured* (D17)
+- revision — estimated as a fraction of syllabus time
+- test series — genuinely countable up front (20 tests × 3 hours = 60 hours)
+
+Projection is the sum over stages. Mixing estimation methods per stage is correct;
+forcing one method across the whole goal is not.
+
+### D19 — The app computes the required rate backwards
+
+The user asked "is 2 hours a day the right amount for GATE?" The more useful question
+is its inverse, and it is answerable immediately: given the work and the date,
+**you need X hours per week.** Compare X against real available capacity.
+
+If required > capacity, the plan is impossible and the app can say so **on day one** —
+before months are invested. This is arguably the single most valuable output of the
+whole system, and it is arithmetic.
+
+### D20 — Missed sessions die officially; catch-up is voluntary and credited
+
+No automatic carry-forward. Reasons differ by goal:
+
+- **Recovery-constrained goals (workouts)** must not accumulate debt. Missing two
+  sessions cannot produce a 6-day training week — that is actively harmful.
+- **Non-recovery goals (GATE)** could in principle recover, but automatic
+  redistribution adds complexity and produces a growing pile of obligation.
+
+So the app **officially kills the missed session** and reports it (dashboard / goal
+page / backlog view — UI later). The user may do it on their own whenever they want,
+and the app **records that and credits it against the ideal path**, so the ideal line
+can still be matched.
+
+Voluntary catch-up, never imposed debt. Requires a per-goal **maximum frequency /
+recovery constraint** so voluntary catch-up cannot itself become harmful.
+
+### D21 — Capacity is a ceiling, not a target
+
+Two independent constraints: number of active goals per daypart (attention) and the
+length of the daypart (time). If free time remains after laying out active goals,
+**it stays free.** Activating another goal is the user's explicit choice.
+
+The app must never nag the user to fill capacity. Stated reason: the user wants to
+focus on few things per daypart and expects to get exhausted otherwise.
+
+**Open tension with D6:** ballast (untracked habits filling leftover slots) partly
+contradicts this. Ballast likely needs to be opt-in, or capped per daypart.
+
 ---
 
 ## Scheduler design (proposed, being refined)
@@ -184,15 +269,19 @@ Coefficients deliberately unfixed; tuned once the app is in real use.
 
 ## Open questions
 
-- **O1 — Planning horizon.** Does the ideal plan cover today, the week, or through to
-  review dates?
+- ~~O1 — Planning horizon~~ → resolved by **D16**.
 - **O2 — Backlog promotion.** When an active goal ends, is the next goal promoted
-  automatically or does the user choose? Does the per-daypart cap count goals or
-  sessions?
-- **O3 — Data entry** (partly addressed by D12/D13). Confirmed principle: the user
-  should never face a blank form; logging is confirming a prompt the app already made.
-- **O4 — Rescheduling scope.** How far may a displaced task move — same day, same
-  week? When is it dropped outright rather than re-placed?
+  automatically or does the user choose? Can a parked goal carry a "not before" date?
+- **O3 — Data entry** (largely addressed by D12/D13/D17). Confirmed principle: the
+  user should never face a blank form; logging is confirming a prompt the app already
+  made.
+- ~~O4 — Rescheduling scope~~ → resolved by **D20**.
 - **O5 — Short slots.** 30 minutes free, DSA's box is 60. Excluded, or is there an
   optional minimum-viable-session?
 - **O6 — Tech stack.** Not discussed. Belongs to `Architecture.md`.
+- **O7 — Ballast vs exhaustion.** D6 fills leftover time with untracked habits; D21
+  says free time stays free and the user expects exhaustion. Needs reconciling.
+- **O8 — Cold start.** What the app shows during the first ~2 weeks, before measured
+  pace exists (D17).
+- **O9 — Stage transitions.** Does the user manually advance a goal from syllabus to
+  revision to test series (D18), or is it inferred from checkpoints?
