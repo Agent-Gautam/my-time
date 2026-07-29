@@ -367,6 +367,19 @@ Plus recovery constraints (D20): a hard **maximum per week**, and optionally a
 frequency-only when they join a gym, so both must be first-class and swappable
 without recreating the goal.
 
+### D27 — Three simplifications, chosen deliberately
+
+- **No scope-cut suggestions.** When D24 reports a scope gap, the app states its
+  size and stops there. It does not recommend which chapters or subjects to drop.
+  Avoids per-unit importance metadata entirely, and the user knows their syllabus
+  better than the app does. May revisit later.
+- **Stage advance is manual.** One explicit tap moves a goal from syllabus to
+  revision to test series. Never inferred from checkpoint position — an inferred
+  transition triggered by a mis-tap would be both wrong and confusing.
+- **No partial sessions.** A stage's time-box is fixed (D12). If the available time
+  is shorter than the box, the session is simply not scheduled. No minimum-viable
+  session, no divisible packing.
+
 ---
 
 ## Scheduler design (proposed, being refined)
@@ -397,15 +410,12 @@ Coefficients deliberately unfixed; tuned once the app is in real use.
   user should never face a blank form; logging is confirming a prompt the app already
   made.
 - ~~O4 — Rescheduling scope~~ → resolved by **D20**.
-- **O5 — Short slots.** 30 minutes free, DSA's box is 60. Excluded, or is there an
-  optional minimum-viable-session?
+- ~~O5 — Short slots~~ → resolved by **D27**.
 - **O6 — Tech stack.** Not discussed. Belongs to `Architecture.md`.
 - ~~O7 — Ballast vs exhaustion~~ → dissolved by **D22**; there is no ballast.
 - ~~O8 — Cold start~~ → resolved by **D25**.
-- **O9 — Stage transitions.** Does the user manually advance a goal from syllabus to
-  revision to test series, or is it inferred when the checkpoint reaches the last unit?
-- **O10 — Scope cutting.** When D24 reports a scope gap, does the app need per-unit
-  importance (essential vs droppable chapters) to *recommend* what to cut, or does it
-  only name the size of the gap and leave the choice entirely to the user?
+- ~~O9 — Stage transitions~~ → resolved by **D27**.
+- ~~O10 — Scope cutting~~ → resolved by **D27**.
 - **O11 — Stage deadline hardness.** Is a derived stage deadline advisory, or does
   crossing it force a decision before the app will keep scheduling that stage?
+- **O12 — v1 scope.** Proposed in `PRD.md`; needs sign-off. Detailed in `Phases.md`.
