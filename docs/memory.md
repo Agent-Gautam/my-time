@@ -12,6 +12,7 @@ tracks' sections.
 
 **Phase:** planning complete → Wave 0 not yet started.
 **Nothing is built.** The repo contains documentation only.
+All six planning documents are done.
 
 | Document | State |
 |---|---|
@@ -20,7 +21,7 @@ tracks' sections.
 | `docs/DECISIONS.md` | ✅ 52 decisions, live — append as you go |
 | `CLAUDE.md` | ✅ written (replaced the planned `rules.md`, D49) |
 | `docs/Phases.md` | ✅ written |
-| `docs/design.md` | ⬜ **next — blocks Track C** |
+| `docs/design.md` | ✅ drafted — Track C unblocked |
 | `docs/memory.md` | ✅ this file |
 
 ## Next action
@@ -28,7 +29,7 @@ tracks' sections.
 **Wave 0** (`Phases.md`), one session, alone. Scaffold + deploy + freeze shared contracts.
 Everything else waits on it.
 
-In parallel: `design.md` is being written, which unblocks Track C.
+All four Wave 1 tracks are unblocked once Wave 0 lands.
 
 ---
 
@@ -44,7 +45,7 @@ In parallel: `design.md` is being written, which unblocks Track C.
 *not started*
 
 ### Track C — Design system
-*blocked on `docs/design.md`*
+*not started — `docs/design.md` is written, so this is unblocked*
 
 ### Track D — Shell / PWA / push
 *not started*
@@ -57,6 +58,9 @@ Tracked in `DECISIONS.md` under "Open questions". Currently outstanding:
 
 - **First-run seeding** — seed sensible default daypart boundaries, or make the user set
   them? *(Leaning: seed defaults; boundaries are editable anyway.)*
+- **Display face** — Inter throughout, or a warmer serif for the one big number per
+  screen? Not blocking.
+- **`auto` theme boundary** — does dark begin at the *night* daypart or at *evening*?
 - **Scheduler coefficients** — deliberately unfixed. Tuned once the app is in real daily
   use; they live in `core/constants.ts` so tuning is a one-file change.
 
@@ -69,3 +73,8 @@ Tracked in `DECISIONS.md` under "Open questions". Currently outstanding:
   per week. (D45)
 - **`core/` purity and the no-fetch-in-UI rule are ESLint-enforced.** A firing guard means
   the design is being violated; fix the code, not the rule. (D42)
+- **Amber has two tokens.** `accent-fill` (~2:1) is background-only; `accent-text` is the
+  contrast-safe one. Swapping them is the exact legibility bug the predecessor shipped.
+  (`design.md` §2.2)
+- **No `backdrop-filter` / large blurs.** Main cause of jank on budget Android.
+  (`design.md` §6.1)
