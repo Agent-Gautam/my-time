@@ -114,8 +114,9 @@ explainSlot(slot, context): string   // "3rd of 4 gym sessions, 3 days left — 
 
 ### 4.2 Rules the implementation must honour
 
-1. **Deterministic.** Same inputs → identical output, always. No randomness, no
-   ambient clock. Two devices computing independently agree.
+1. **Deterministic.** Same inputs → identical output, always. No randomness, no ambient
+   clock. Note this is *not* sufficient for two devices to agree, because `existing` is
+   itself an input — which is exactly why the plan syncs (§5.2, D45).
 2. **Recompute, never patch.** Every trigger — missed session, goal activated, cadence
    edited, daypart moved — is just "inputs changed, regenerate." Idempotent, so racing
    recomputes are harmless. (D32)
@@ -146,10 +147,12 @@ Per D29 the schema models the **full decided design** from the first migration, 
 where v1 leaves a table holding one implicit row. Deferred features are *gated in the
 UI*, not missing from the database — so v2 is additive rather than a migration.
 
-Two classes of table, and the distinction matters:
+Two classes of table:
 
-- **Synced** — mirrored between IndexedDB and Postgres.
-- **Local-only** — never leaves the device, because it is derived (D34).
+- **Synced** — mirrored between IndexedDB and Postgres. Almost everything, including the
+  plan itself (§5.2).
+- **Local-only** — never leaves the device. Only the outbox, which is purely a transport
+  detail.
 
 | Table | Class | Purpose |
 |---|---|---|
@@ -162,7 +165,7 @@ Two classes of table, and the distinction matters:
 | `checkpoints` | synced, **append-only** | Coarse progress — "chapter 7" (D13) |
 | `check_ins` | synced, **append-only** | Daypart + available minutes stated by user |
 | `push_subscriptions` | synced | Web Push endpoints per device |
-| `plan_slots` | **synced, atomic per week** | The week's placements. Derived, but synced — see §5.3 (D45) |
+| `plan_slots` | **synced, atomic per week** | The week's placements. Derived, but synced — see §5.2 (D45) |
 | `outbox` | **local-only** | Pending writes awaiting sync |
 
 ### 5.1 Key columns
