@@ -3,7 +3,8 @@
 Running record of design decisions made during discussion, before any code exists.
 Appended each round. `PRD.md`, `Architecture.md` etc. get written *from* this file.
 
-**Status:** PRD complete and signed off. `Architecture.md` next. Nothing built yet.
+**Status:** PRD signed off. `Architecture.md` drafted. Nothing built yet.
+Remaining documents: `rules.md`, `Phases.md`, `design.md`, `memory.md`.
 
 ---
 
@@ -564,6 +565,32 @@ to production on Vercel from the very first commit, and a deployable skeleton sh
 **before** any feature work. Branch previews for anything in progress. `Phases.md`
 must therefore open with a deploy phase, not close with one.
 
+### D41 — Target platforms: Windows + Android only
+
+Both Chrome. **No iOS**, which removes the entire Web Push caveat from D36 — push works
+natively, and installing the PWA is optional polish rather than required onboarding.
+The app shell needs no forced install flow.
+
+### D42 — Two guarded architectural invariants
+
+The design rests on two rules that are trivially easy to violate by accident, so they
+get mechanical enforcement (ESLint `no-restricted-imports`, checked in CI) rather than
+good intentions. Detail belongs in `rules.md`:
+
+1. **`src/core/**` is pure** — may not import `db/`, `app/`, `sync/` or `react`, and
+   does not read the clock internally (time is an input). This is what keeps the
+   scheduler deterministic and unit-testable (D34).
+2. **The UI never fetches** — client components may not call `fetch` or import
+   `db/server/`. Only `sync/` and route handlers touch the network. This is what makes
+   offline the default path rather than a special case (D33).
+
+### D43 — Plan slots are persisted locally despite being derived
+
+Mild tension with D34 (the plan is derived and never synced) resolved: `plan_slots` is
+a **local-only** table. It is still derived and still never synced, but it *is*
+persisted on-device, because D32's churn rule requires re-layout to know the existing
+placements in order to prefer them. Derived-but-remembered, not stored-as-truth.
+
 ---
 
 ## Scheduler design (proposed, being refined)
@@ -595,10 +622,7 @@ Coefficients deliberately unfixed; tuned once the app is in real use.
 - ~~O4 — Rescheduling scope~~ → resolved by **D20**.
 - ~~O5 — Short slots~~ → resolved by **D27**.
 - ~~O6 — Tech stack~~ → resolved by **D38**.
-- **O13 — Phone OS.** Blocks `Architecture.md`. Web Push is reliable on Android/Chrome;
-  on iOS it needs 16.4+ **and** the PWA installed to the Home Screen. If iOS, the
-  install flow becomes required onboarding rather than optional polish — a structural
-  difference in the app shell. (D36)
+- ~~O13 — Phone OS~~ → resolved by **D41**: Windows + Android only, both Chrome.
 - ~~O7 — Ballast vs exhaustion~~ → dissolved by **D22**; there is no ballast.
 - ~~O8 — Cold start~~ → resolved by **D25**.
 - ~~O9 — Stage transitions~~ → resolved by **D27**.
