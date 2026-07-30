@@ -1202,3 +1202,83 @@ exercise a skipped session or a second page of history — only the empty and
 single-entry states were verified live; the pagination path itself was verified
 by code review against the `missedOccurrencesPage` pattern it copies, not against
 a live 50+-row stage.
+
+---
+
+## Session — 2026-07-30/31 · Wave 3 + Wave 4 merged, D59 added
+
+**Both waves are on `main` (`7716d05`).** Wave 3 then Wave 4, zero file conflicts —
+`docs/memory.md` was the only shared file and merged automatically. Path ownership has
+now held across two waves; every failure remains at the seams no track owns.
+
+**Gates:** lint clean, 170 tests / 13 files (was 165, +5 for D59), production build OK.
+
+### What the gates could not see, and had to be checked live
+
+Wave 3 was the first code to touch real Postgres with the text ids, so the merge was
+verified with real requests against the database, not only the fake transport:
+
+- **`db.transaction` through the lazy client Proxy.** The Proxy was added during D2 and
+  the cron endpoint only ever proved `select`/`delete` through it. `applyPlanWeek` uses
+  a transaction, and `this` inside it resolves through the Proxy. Confirmed working
+  (`applied:[1]`). Drizzle's `PgDatabase` has no `#private` fields, so the receiver
+  never becomes a problem — worth knowing before anyone "simplifies" that Proxy.
+- **`server_updated_at` bumps on UPDATE, not only INSERT.** It is the pull cursor, so if
+  it did not, an edited row would never reach the other device — silent, permanent
+  divergence that no test in `tests/sync/**` can reach. Verified: a winning write moved
+  the cursor.
+- **A losing write does not move the cursor.** A stale v1 pushed after v2 was refused
+  and left `server_updated_at` alone, so it did not re-broadcast to every device. This
+  is the behaviour the `ON CONFLICT ... WHERE` guard exists for.
+
+A synthetic `week-2026-07-27` was written during that check and **deleted afterwards** —
+an empty week with a late `updatedAt` can win LWW and take a real week's slots with it.
+The database held no real rows at the time.
+
+### D59 — the sync endpoint was wide open
+
+Wave 3 put every row the app holds behind one unauthenticated `POST /api/sync` on a
+public URL. Not a Wave 3 mistake — auth is deferred by decision — but a change in kind:
+`/api/push/subscribe` only let a stranger add a push token.
+
+Shipped: a shared `x-sync-key` header (`SYNC_KEY` + `NEXT_PUBLIC_SYNC_KEY`, same value,
+set in `.env.local` and all three Vercel environments). **It is labelled "not
+authentication" everywhere it appears**, because `NEXT_PUBLIC_` inlines it into the JS
+bundle and Serwist precaches that bundle — anyone who opens devtools can read it. It
+deters crawlers and nothing else. Real access control is **O14**, not built.
+
+The load-bearing part is the 401 handling, not the key. Every transport failure
+previously took the backoff path, so a rotated key — or a client still serving a
+precached bundle with the old one — would have retried forever, never drained the
+outbox, and shown an ordinary `pending` with no explanation. A 401/403 now sets
+`blocked`, skips the retry, and clears on the next accepted run. The check **fails open
+when `SYNC_KEY` is unset**, deliberately: that is today's behaviour, and a wedged outbox
+is harder to notice than an open endpoint.
+
+Rejection reasons were returning the failing SQL with its column list to an
+unauthenticated caller; trimmed to `"<op> on <table> was refused"`, detail to the server
+log. Nothing on the client reads `reason` (only `seq`), which is what made that safe.
+
+**Test note worth keeping:** `scheduleRetry` early-returns when `window` is undefined,
+and the suite runs in node — so "no retry fired" is trivially true there and a
+timer-based assertion proves nothing. The D59 tests assert the `blocked` branch that
+decides it, plus the consequences that are observable (outbox intact, flag clears). An
+earlier version of one test re-`install`ed the transport to flip behaviour; that calls
+`configureSync`, which resets engine state, so it passed vacuously. It now flips a
+mutable status on the same transport.
+
+### Not verified, and why
+
+The deployed production key was **not** confirmed with a request. Preview URLs sit
+behind Vercel SSO (every curl gets Vercel's own 401 before the app runs), and direct
+curls to production were blocked in this environment. The values were piped from one
+generated key with `grep`/`cut` — the method that avoids the dotenv-banner corruption
+that broke `DATABASE_URL` — and all six writes reported success, but that is inference,
+not proof. **First person to open the app should check the sync indicator: anything
+other than the blocked icon (a slashed circle) means the keys match.**
+
+### Still open
+
+- Supabase database password rotation (exposed in Vercel log output on 2026-07-29).
+- D36 sign-off: notification actually arriving on the Android phone.
+- O14: real access control for `/api/sync`.
