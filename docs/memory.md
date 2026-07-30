@@ -353,6 +353,13 @@ Three things the merge had to resolve, because no single track owned them:
 - **`theme_color` disagreed** — the manifest said `#2F455D` (`ink`), the
   `viewport.themeColor` said `#FAF7F1` (`bg`). Manifest now matches `bg`.
 
+A fourth thing only the deploy caught: `createSerwistRoute` defaults
+`useNativeEsbuild` to `false` off Windows, so the first pushed build failed on
+Vercel with `Cannot find package 'esbuild-wasm'` while passing locally. Pinned
+`useNativeEsbuild: true` and added **`esbuild@0.28.1` as a devDependency** — the
+one dependency this merge introduced, and only because `@serwist/turbopack`
+declares it as an (optional) peer.
+
 `npm run lint`, `npm run test` (62 tests, 6 files) and `npm run build` all pass
 on merged `main`. Build compiles the worker: 24 precache entries.
 
@@ -389,10 +396,14 @@ Tracked in `DECISIONS.md` under "Open questions". Currently outstanding:
 - **`@serwist/next` does not work on Next.js 16** — webpack-only, and Turbopack
   is the Next 16 default. Use `@serwist/turbopack`. The worker is a route
   handler, not a bundler plugin, so there is no `public/sw.js`.
-- **`esbuild` is only a transitive dependency.** `@serwist/turbopack` needs it
-  (optional peer) to compile the worker; it currently resolves via
-  vitest → vite → esbuild@0.28.1. If vitest ever goes, declare `esbuild`
-  explicitly or the PWA build breaks.
+- **`createSerwistRoute` needs `useNativeEsbuild: true` pinned.** It defaults to
+  `false` on anything that isn't Windows, which imports `esbuild-wasm`. A local
+  Windows build therefore passes while the Vercel (Linux) build dies with
+  `Cannot find package 'esbuild-wasm'`. Pinned true, and `esbuild@0.28.1` is now
+  a declared devDependency instead of a transitive hoist from vite.
+- **A green local build does not mean a green deploy.** The one platform
+  difference above cost a red production deployment. `npx vercel inspect --logs
+  <url>` is how to read the failure; `npx vercel ls` shows deployment status.
 - **`npm run build` is the only check that exercises the service worker.** Lint
   and tests both pass on a tree whose PWA build is broken. Run the build before
   pushing to `main` — it auto-deploys (D40).

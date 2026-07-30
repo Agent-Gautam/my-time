@@ -6,4 +6,8 @@ import { createSerwistRoute } from "@serwist/turbopack";
 export const { dynamic, dynamicParams, revalidate, generateStaticParams, GET } =
   createSerwistRoute({
     swSrc: "src/sw.ts",
+    // Defaults to false off Windows, which pulls in `esbuild-wasm` and broke the
+    // Vercel build while passing locally. Pinned true so both platforms use the
+    // native `esbuild` (a declared devDependency).
+    useNativeEsbuild: true,
   });
