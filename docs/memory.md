@@ -1139,3 +1139,66 @@ Tracked in `DECISIONS.md` under "Open questions". Currently outstanding:
 - **`npm run build` is the only check that exercises the service worker.** Lint
   and tests both pass on a tree whose PWA build is broken. Run the build before
   pushing to `main` — it auto-deploys (D40).
+- **`npm run build` needs `DATABASE_URL` set**, even locally, because
+  `api/push/subscribe` reaches the DB client at module scope and Next collects
+  page data for every route at build time. Not a bug introduced by any track —
+  export any syntactically valid Postgres URL for a local build; the real value
+  only matters at runtime.
+
+### Wave 4 — Tracking
+**Done.** Built in `../my-time-tracking` on `track/wave4-tracking`.
+
+Confirmed the supervisor's readiness note: `core/pace.ts` and
+`features/checkin/goal-status-row.tsx` needed no changes. This wave only added the
+`/goals/[id]` detail screen — the same numbers Today shows, given room to breathe,
+plus history views Today never had reason to.
+
+- `src/features/goals/goal-detail/` — new:
+  - `goal-detail.tsx` — orchestrator, finds the `(goal, stage)` pair the same way
+    `goal-edit.tsx` already does (`getGoalsWithStage()`, client-side find — still
+    no single-goal read in `queries.ts`, noted again below).
+  - `pace-summary.tsx` — cadence required/actual, the arithmetic scope line, the
+    measured line, and the projection range, calling `goalPaceStatus` from
+    `features/checkin/lib.ts` verbatim. No new arithmetic anywhere in this wave —
+    `measuredPerUnit == null` still renders nothing (D25), the projection is still
+    a range, never a point (D25, D57).
+  - `session-history.tsx` — paginated, "Load more" pattern copied from
+    `app/missed/page.tsx` (same dev-mode-double-invoke guard via a ref). Skipped
+    sessions render in `text-neutral` (design.md §2.3) — information, not a
+    verdict.
+  - `checkpoint-history.tsx` — a single bounded `getCheckpointsForStage(stageId,
+    { limit: 100 })` read, no pagination UI. Checkpoints are sparse by design
+    (D13, weekly at most), so 100 covers years; this is not the "bounded page"
+    pattern the session history needed.
+  - `lib.ts` — `sessionHistoryPage`, the one new piece of logic this wave added.
+- `src/app/goals/[id]/page.tsx` — extended, not replaced: `GoalDetail` renders
+  above a `Separator`, `GoalEdit` (untouched) below it. The page no longer has a
+  fixed "Edit goal" h1 — the goal's own name is now the h1, "Edit goal" moved to
+  an h2 above the existing form.
+
+**The query gap flagged, per the track brief ("report it, don't add it")**:
+`db/local/queries.ts` has no per-stage paginated session read. `getSessionLogPage`
+paginates `sessionLogs` globally, keyset on `[date+id]`, with no `stageId` filter —
+fine for a cross-goal feed, wrong shape for "this goal's history." Rather than add
+a `[stageId+date+id]` index to a file Wave 3 owns concurrently,
+`goal-detail/lib.ts`'s `sessionHistoryPage` scans a bounded number of the existing
+global pages (`MAX_UNDERLYING_PAGES_PER_SCAN = 8`) and filters by `stageId`
+client-side — same shape as `missedOccurrencesPage`'s bounded week-by-week scan,
+same tradeoff: correct and D47-bounded, but a stage that logs rarely relative to
+every other active goal combined pays for more underlying page reads per "Load
+more" click than a dedicated index would need. Worth a real `[stageId+date+id]`
+index if per-goal history turns out to be a heavily used screen.
+
+**Verified:** `npm run lint`, `npm run test` (111 tests, unchanged — UI needs
+none), `npm run build` (with `DATABASE_URL` set locally, see above) all pass.
+Checked in-browser via Claude-in-Chrome in both themes: created a scoped goal
+("GATE prep", 30m/3×week, scope `chapter`/30, target date 2026-12-31), confirmed
+the pre-data state (arithmetic scope line shown, measured/projection correctly
+absent — D25), then logged one voluntary session and one checkpoint (`3`) and
+confirmed all four pace lines render, the session appears in history as "Done ·
+voluntary", the checkpoint appears with its logged time, and the on-track dot is
+sage (not a hardcoded green) in both light and dark. No goal state existed to
+exercise a skipped session or a second page of history — only the empty and
+single-entry states were verified live; the pagination path itself was verified
+by code review against the `missedOccurrencesPage` pattern it copies, not against
+a live 50+-row stage.
