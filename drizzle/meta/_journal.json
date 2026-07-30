@@ -8,6 +8,13 @@
       "when": 1785399530483,
       "tag": "0000_initial_schema",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785399973265,
+      "tag": "0001_fk_delete_behaviour",
+      "breakpoints": true
     }
   ]
 }

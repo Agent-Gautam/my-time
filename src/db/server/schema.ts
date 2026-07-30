@@ -9,6 +9,16 @@
 // Columns mirror `core/types.ts`, which is frozen. Mapping between these rows and the
 // core types happens at the edges — nothing outside `db/server/**` imports this file's
 // inferred types, so the domain contract stays `core/types.ts` (D34).
+//
+// Delete behaviour, since the app soft-deletes and these paths are therefore dormant
+// until something hard-deletes:
+//
+//   - The ownership chain cascades all the way down: user → goal → stage → logs.
+//     A cascade that stops halfway leaves a hard delete failing on an FK violation
+//     mid-statement, which is a far worse thing to debug than a full cascade.
+//   - References to `dayparts` deliberately do **not** cascade. A logged session keeps
+//     the `daypart_id` it was recorded against even when boundaries change (D44), so a
+//     daypart with history can only be soft-deleted. That restriction is the point.
 
 import { sql } from "drizzle-orm";
 import {
@@ -150,7 +160,13 @@ export const stages = pgTable(
     cadenceCount: integer("cadence_count").notNull(),
     /** Weekday set — for `fixed_days` / `hybrid` only (D26). */
     cadenceDays: text("cadence_days").array().$type<Weekday[]>(),
-    /** A set of daypart ids, not one value (D7). */
+    /**
+     * A set of daypart ids, not one value (D7). An array cannot carry an FK, so a
+     * hard-deleted daypart would leave a dangling id here — accepted deliberately:
+     * it matches the frozen `Stage.eligibleDayparts: string[]`, dayparts are
+     * soft-deleted, and moving to a join table later would itself be the reshape
+     * D51 forbids. Readers filter against the live daypart set.
+     */
     eligibleDayparts: uuid("eligible_dayparts").array().notNull(),
     /** Hard recovery ceiling (D20). */
     maxPerWeek: integer("max_per_week"),
@@ -204,7 +220,7 @@ export const sessionLogs = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     stageId: uuid("stage_id")
       .notNull()
-      .references(() => stages.id),
+      .references(() => stages.id, { onDelete: "cascade" }),
     date: date("date", { mode: "string" }).notNull(),
     /** The daypart it was recorded against; kept even if boundaries change (D44). */
     daypartId: uuid("daypart_id")
@@ -237,7 +253,7 @@ export const checkpoints = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     stageId: uuid("stage_id")
       .notNull()
-      .references(() => stages.id),
+      .references(() => stages.id, { onDelete: "cascade" }),
     /** Progress in the stage's `scope_unit_label` units. Fractional — a metric goal
      *  (70 → 73kg) is the same arithmetic as "chapter 7" with a different unit (D28). */
     value: doublePrecision("value").notNull(),

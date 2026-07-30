@@ -88,9 +88,16 @@ Branch `track/db`, worktree `../my-time-db`.
   `push_subscriptions`, `plan_weeks`, `plan_slots`.
 - `src/db/server/client.ts` — postgres.js + Drizzle. `prepare: false` is **required**,
   not tuning: Supabase's transaction-mode pooler can't hold prepared statements.
-- `drizzle/0000_initial_schema.sql` — generated, committed with `drizzle/meta/`
-  (the journal is what makes the next `generate` correct), and **applied to Supabase**.
-  Verified live: 10 tables in `public`, 28 indexes, 15 check constraints.
+- `drizzle/0000_initial_schema.sql` + `drizzle/0001_fk_delete_behaviour.sql` —
+  generated, committed with `drizzle/meta/` (the journal is what makes the next
+  `generate` correct), and **applied to Supabase**. Verified live: 10 tables in
+  `public`, 28 indexes, 15 check constraints, 13 FKs with the intended delete rules.
+- `tests/db/local-schema.test.ts` — 7 assertions that the Dexie index strings parse
+  into the indexes `queries.ts` actually queries. Dexie parses `stores({...})` from
+  strings, so a typo there is invisible to `tsc` **and** to ESLint and would fail at
+  `open()` on a real device in Wave 2. Needs no IndexedDB and no new dependency —
+  Dexie builds its schema at construction. This is the only test in the track; the
+  pure core remains the thing worth testing (CLAUDE.md).
 - `src/db/local/schema.ts` — Dexie mirror, `version(1)`, + the local-only `outbox`.
 - `src/db/local/queries.ts` — bounded read helpers, outbox helpers, atomic
   `replacePlanWeek`, `pruneHistoryBefore`.
@@ -135,12 +142,36 @@ frozen file — if A adds it, say so and B regenerates the migration (cheap, DB 
 - Enum-ish columns are `text` + a CHECK, not `pgEnum`. Changing a Postgres enum's
   values is the one genuinely annoying migration; text isn't.
 
+**Delete rules — read before adding an FK here.** The app soft-deletes, so these paths
+are dormant, which is exactly why they'd surface as a baffling 500 later:
+
+- **The ownership chain cascades the whole way down**: user → goal → stage → session
+  logs / checkpoints / plan slots. A cascade that stops halfway (the original 0000 had
+  `goals → stages` cascading into a `session_logs` no-action) leaves a hard delete
+  failing on an FK violation mid-statement. Fixed in `0001`.
+- **References to `dayparts` deliberately do not cascade.** A logged session keeps the
+  `daypart_id` it was recorded against (D44), so a daypart with history can only be
+  soft-deleted. The restriction is the point, not an oversight. Consequence: a future
+  hard "delete my account" will restrict on dayparts and needs to be a scripted,
+  ordered delete rather than one statement.
+- **`stages.eligible_dayparts` is `uuid[]` and carries no FK** — an array can't. A
+  hard-deleted daypart would leave a dangling id. Accepted: it matches the frozen
+  `Stage.eligibleDayparts: string[]`, dayparts are soft-deleted, and switching to a
+  join table later would itself be the reshape D51 forbids. Readers filter against the
+  live daypart set.
+
 **Gotchas:**
 
 - **`.env.local` is gitignored, so it does not exist in a fresh worktree.** Copy it
   from the main checkout before `db:migrate`.
 - **The transaction pooler (`:6543`) did handle the DDL** — no need for the
   session-mode string. Recorded because the opposite is the common failure.
+- **`db:migrate` prints two `NOTICE`s** — `schema "drizzle" already exists` and
+  `relation "__drizzle_migrations" already exists`. Benign; it is idempotent.
+- **`0001` exists because dropping the schema was refused, not because a squash was
+  wrong.** With an empty DB a single clean `0000` would be tidier, so if Track A's type
+  changes force a regeneration anyway, squash both files then — it needs an explicit
+  go-ahead for the `drop schema public cascade`.
 - **IndexedDB cannot index `null`**, so `deletedAt` is not a Dexie index. Soft-deleted
   rows are filtered in JS, and only on the bounded tables (`dayparts`, `goals`,
   `stages`) — never on a growing one.
