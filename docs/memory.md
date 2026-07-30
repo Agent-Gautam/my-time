@@ -489,6 +489,39 @@ it with 80px content clearance.
 **Left for the supervisor:** mount Wave 2d's `<SyncStatus />` at the marked seam in
 `components/nav.tsx`.
 
+### Wave 2.0 merge — supervisor resolutions
+
+Merged with `--no-ff`, no conflicts. Both reported `core/` findings were real and are
+now fixed on `main`; `src/core/**` stays frozen for feature tracks — these were
+supervisor changes, with tests, as `CLAUDE.md` requires for any `layout`/`reconcile`
+change.
+
+1. **Duplicate slot ids — confirmed and fixed (now D54).** `respectsRest` returns true
+   unconditionally when `minRestDays` is null, which is the common case, so a retained
+   slot did not stop a fresh placement on the same date. `placeRemaining` now filters
+   `!committedDates.includes(day)`. Two regression tests added under *"layoutWeek — one
+   session per stage per date"*; **verified they fail without the fix** — the realistic
+   three-goal case returned 14 slots with only 12 unique ids. `planner.dedupeById` was
+   removed, since keeping a containment for a fixed bug is how the next regression hides.
+2. **`reconcile.ts`'s doc comment — corrected.** It claimed slots arrive in priority
+   order "the order layout.ts produces"; they don't. The comment now states that the
+   caller must impose the order and that `planner.reconcileNow` re-scoring is the correct
+   behaviour, because priority depends on the day it's asked on, not on when the plan was
+   laid out.
+3. **The local wall-clock convention is now D53.** Too important to live only in a
+   handoff note — `new Date().toISOString()` is a bug anywhere in this codebase, and
+   `localNow()` is the single sanctioned clock read. The timezone-ambiguity cost is
+   recorded there honestly.
+4. **`fake-indexeddb` — not added; asked the user.** The harness caught the night-anchor
+   bug that unit tests structurally cannot see, so it is worth making permanent, but D50
+   says ask before adding a dependency and nothing is broken without it.
+
+**Process note:** Wave 2d committed its two code files correctly on its own branch but
+wrote its `docs/memory.md` notes into the *main* worktree instead, where they sat
+uncommitted and blocked this merge. Preserved verbatim and reapplied when 2d merged.
+Sessions should write only inside their own worktree — the same class of mistake as
+Wave 0's `git add -A`.
+
 ---
 
 ## Decisions still open

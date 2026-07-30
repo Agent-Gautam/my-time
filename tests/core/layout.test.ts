@@ -198,6 +198,47 @@ describe("layoutWeek — recovery constraints (D20)", () => {
   });
 });
 
+describe("layoutWeek — one session per stage per date", () => {
+  // Regression, reported by Wave 2.0. Slot ids are `plan-<stageId>-<date>` with no
+  // daypart component, and `minRestDays` is usually null, so a retained `existing`
+  // slot did not stop a fresh placement on the same date. Both carried the same id,
+  // `bulkPut` collapsed them, and the week came up a session short with no error.
+  it("does not place a second slot on a date the stage already has a retained slot on", () => {
+    const st = stage({ cadenceCount: 2, minRestDays: null });
+    // Canonical id, i.e. the slot a previous layoutWeek run produced — which is
+    // always what `existing` actually contains.
+    const existing: PlanSlot[] = [
+      { id: `plan-${st.id}-2026-07-27`, stageId: st.id, weekStart: WEEK_START, date: "2026-07-27", daypartId: "morning", minutes: 30 },
+    ];
+
+    const result = run({ stages: [st], existing });
+    const mine = result.filter((s) => s.stageId === st.id);
+
+    expect(mine).toHaveLength(2);
+    expect(new Set(mine.map((s) => s.id)).size).toBe(2);
+    expect(new Set(mine.map((s) => s.date)).size).toBe(2);
+  });
+
+  it("returns globally unique slot ids across several competing stages", () => {
+    const stages = [
+      stage({ id: "stage-a", cadenceCount: 4 }),
+      stage({ id: "stage-b", goalId: "goal-2", cadenceCount: 3, eligibleDayparts: ["evening"] }),
+      stage({ id: "stage-c", goalId: "goal-2", cadenceCount: 5, eligibleDayparts: ["morning", "evening"] }),
+    ];
+    const goals = [goal(), goal({ id: "goal-2", name: "Reading" })];
+
+    const first = run({ goals, stages });
+    // Feed it back and raise cadence — the path that made duplicates reachable.
+    const second = run({
+      goals,
+      stages: stages.map((s) => (s.id === "stage-a" ? { ...s, cadenceCount: 6 } : s)),
+      existing: first,
+    });
+
+    expect(new Set(second.map((s) => s.id)).size).toBe(second.length);
+  });
+});
+
 describe("layoutWeek — general sanity", () => {
   it("never produces a slot with a different duration than the stage's fixed time-box (D12)", () => {
     const st = stage({ sessionMinutes: 45, cadenceCount: 3 });

@@ -134,7 +134,12 @@ export async function relayoutWeek(input: {
   });
 
   const weekId = planWeekId(weekStart);
-  const slots: LocalPlanSlot[] = dedupeById(laidOut).map((slot) => ({
+  // Slot ids are unique per week: `layoutWeek` places at most one session per stage
+  // per date, and ids are `plan-<stageId>-<date>`. That was not true when this module
+  // was written — a retained slot plus a fresh placement on the same date collided and
+  // `bulkPut` silently collapsed them. Fixed in `core/layout.ts` and covered by
+  // "layoutWeek — one session per stage per date" in tests/core/layout.test.ts.
+  const slots: LocalPlanSlot[] = laidOut.map((slot) => ({
     ...slot,
     planWeekId: weekId,
   }));
@@ -160,23 +165,6 @@ export async function relayoutWeek(input: {
   );
 
   return { weekStart, version, slots };
-}
-
-/**
- * `layoutWeek` can emit two byte-identical slots for one stage on one date — a
- * retained `existing` slot plus a freshly placed one, since slot ids are
- * `plan-<stageId>-<date>` with no daypart or occurrence component. `bulkPut` would
- * collapse them silently and the week would come up a session short with no error
- * anywhere.
- *
- * Deduplicating here makes that collapse explicit rather than accidental. It is a
- * containment, not a fix: `src/core/**` is frozen for this wave, and the id scheme
- * is reported for the supervisor to decide on.
- */
-function dedupeById(slots: readonly PlanSlot[]): PlanSlot[] {
-  const byId = new Map<string, PlanSlot>();
-  for (const slot of slots) if (!byId.has(slot.id)) byId.set(slot.id, slot);
-  return [...byId.values()];
 }
 
 // ---------------------------------------------------------------------------

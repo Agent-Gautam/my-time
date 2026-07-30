@@ -130,6 +130,7 @@ function placeRemaining(args: {
         p.remainingNeeded > 0 &&
         p.eligibleDaypartsCount > 0 &&
         isLegalDay(p.stage, day) &&
+        !p.committedDates.includes(day) && // at most one session per stage per date
         respectsRest(p.stage, day, p.committedDates) &&
         !reservedForMandatory(p, day, weekEnd),
     );
@@ -194,6 +195,14 @@ function isLegalDay(stage: Stage, date: IsoDate): boolean {
   return true; // frequency and hybrid: any day is structurally legal
 }
 
+/**
+ * The optional rest gap (D20) only. **Not** the one-session-per-stage-per-date rule —
+ * `minRestDays` is usually null, so this returns true for a date the stage is already
+ * committed to. `placeRemaining` checks `committedDates.includes(day)` separately, and
+ * must: without it a retained `existing` slot plus a fresh placement on the same date
+ * both get id `plan-<stageId>-<date>`, `bulkPut` collapses them, and the week comes up
+ * a session short with no error anywhere.
+ */
 function respectsRest(stage: Stage, date: IsoDate, committedDates: readonly IsoDate[]): boolean {
   if (stage.minRestDays == null) return true;
   return committedDates.every((c) => Math.abs(diffDays(date, c)) > stage.minRestDays!);

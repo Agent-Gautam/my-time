@@ -722,6 +722,44 @@ Someone handed the repo should be able to reskin the whole app by editing one fi
 
 ---
 
+### D53 — `IsoDateTime` is local wall-clock, never UTC
+
+Discovered while building the Wave 2.0 seam, and **forced rather than chosen**.
+
+`Daypart.startTime`/`endTime` are wall-clock `"HH:mm"` strings, and `dateUtils.dateOnly()`
+is `slice(0, 10)`. Those two only agree with each other if the timestamp they are compared
+against is also local. So `IsoDateTime` is `YYYY-MM-DDTHH:mm:ss` — **no `Z`, no offset.**
+
+`new Date().toISOString()` is therefore a bug anywhere in this codebase. It would put any
+user east of UTC in the wrong daypart, and after roughly 18:30 local it would record
+sessions against the wrong `date` — silently, because the unit tests pass date strings in
+directly and never see it.
+
+There is exactly one sanctioned clock read: **`localNow()` in `lib/daypart.ts`.** `core/`
+still never reads the clock at all (D34); it receives these strings as parameters.
+
+The cost is honest: a wall-clock stamp with no offset is ambiguous if the user changes
+timezone, and it syncs to Postgres as a naive local time. Accepted, because the app is
+single-user on Windows + Android (D41) and the daypart model is inherently wall-clock — a
+morning session is at 7am wherever you are. Revisit only if multi-user (v2) lands.
+
+### D54 — A stage gets at most one session per date
+
+`PlanSlot.id` is `plan-<stageId>-<date>`, with no daypart or occurrence component, so the
+identity scheme already asserts this. It was not *enforced*: `minRestDays` is optional and
+usually null, so a retained slot plus a fresh placement could both land on one date with
+the same id, and `bulkPut` collapsed them — a week silently one session short. Reproduced
+at 14 slots / 12 unique ids in an ordinary three-goal week. Now enforced in
+`placeRemaining` and covered by tests.
+
+Making it explicit because it is a real modelling constraint, not just a bug fix: **cadence
+counts days, not sessions.** "4×/week" means four days, and a stage cannot be scheduled
+twice in one day even across two eligible dayparts. That fits the fixed time-box (D12) and
+the recovery limits (D20). If a stage ever legitimately needs two sessions in one day, both
+the id scheme and this rule have to change together — it is not a one-line relaxation.
+
+---
+
 ## Scheduler design (proposed, being refined)
 
 Signals feeding the score:

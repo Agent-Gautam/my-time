@@ -16,10 +16,16 @@ function isBetter(a: Cell, b: Cell): boolean {
 }
 
 /**
- * `slots` must already be in priority order (index 0 = most important) — the
- * order layout.ts produces. Rank position, not a separate field, supplies the
- * knapsack's value: earlier slots are worth more, but several lower-ranked
- * sessions can still outweigh one higher-ranked session when they fit better.
+ * `slots` must already be in priority order (index 0 = most important). Rank
+ * position, not a separate field, supplies the knapsack's value: earlier slots are
+ * worth more, but several lower-ranked sessions can still outweigh one higher-ranked
+ * session when they fit better.
+ *
+ * **The caller must impose that order.** `layoutWeek` sorts its output by date, then
+ * daypart, then `stageId` — not by priority — and Dexie returns slots in index order,
+ * so neither supplies it. `features/plan/planner.ts` re-scores with `scoreStage`
+ * before calling here, which is correct: priority is a function of the day it is
+ * asked on (staleness and cadence debt move), not of when the plan was laid out.
  */
 export function reconcileDaypart(input: {
   slots: readonly PlanSlot[];
