@@ -79,7 +79,88 @@ rules. Track A (the scheduler) is the one to give the most capable session.
 *not started*
 
 ### Track B — Data layer (`db/`, `drizzle/`)
-*not started*
+**Done, pending two things the user needs to look at (both flagged below).**
+
+Branch `track/db`, worktree `../my-time-db`.
+
+- `src/db/server/schema.ts` — Drizzle schema, **10 tables**: `users`, `dayparts`,
+  `goals`, `stages`, `session_logs`, `checkpoints`, `check_ins`,
+  `push_subscriptions`, `plan_weeks`, `plan_slots`.
+- `src/db/server/client.ts` — postgres.js + Drizzle. `prepare: false` is **required**,
+  not tuning: Supabase's transaction-mode pooler can't hold prepared statements.
+- `drizzle/0000_initial_schema.sql` — generated, committed with `drizzle/meta/`
+  (the journal is what makes the next `generate` correct), and **applied to Supabase**.
+  Verified live: 10 tables in `public`, 28 indexes, 15 check constraints.
+- `src/db/local/schema.ts` — Dexie mirror, `version(1)`, + the local-only `outbox`.
+- `src/db/local/queries.ts` — bounded read helpers, outbox helpers, atomic
+  `replacePlanWeek`, `pruneHistoryBefore`.
+- `drizzle.config.ts` — added `process.loadEnvFile(".env.local")`; drizzle-kit isn't
+  Next.js and doesn't read `.env.local` on its own. Node 22 built-in, no new dep (D50).
+- `npx tsc --noEmit` and `npm run lint` both clean. No new dependencies added.
+
+**Two things needing the user's eye:**
+
+1. **`plan_weeks` is a new table, not in `Architecture.md` §5's list.** D45 requires
+   "one version stamp for the whole week". Putting that stamp on each `plan_slots` row
+   and extracting it later would move a column between tables — the exact reshape D51
+   forbids. So it exists now: `(id, user_id, week_start, version, updated_at)`,
+   `unique(user_id, week_start)`, with `plan_slots.plan_week_id` cascading. "Latest
+   wins wholesale" becomes: replace the week row, let the cascade take its slots.
+   **Proposed as D53 — not written to `DECISIONS.md` unilaterally.**
+2. **`goal_cycles` is deliberately absent.** D51 names it as the deferrable case, and
+   PRD §6.1 tags verdict cycles `[later]`. It's a new table with an FK to `goals`, so
+   it's purely additive whenever it lands. Note this makes `Phases.md` line 64
+   ("schema-complete now, including tables v1 leaves nearly empty (D29)") and
+   `Architecture.md` §5's "`goal_cycles` — v1 writes, UI deferred" both stale — they
+   predate D51.
+
+**For Track A:** `GoalState` in `core/types.ts` is `planned | active | dropped`, but
+PRD §6.1 `[v1]` says `planned → active → completed / dropped`. **`completed` is
+missing.** The DB check constraint mirrors `types.ts` exactly rather than patching a
+frozen file — if A adds it, say so and B regenerates the migration (cheap, DB is empty).
+
+**Deliberate additions beyond §5.1, all reshape-driven:**
+
+- `user_id NOT NULL` on the five top-level tables (`dayparts`, `goals`, `check_ins`,
+  `push_subscriptions`, `plan_weeks`). Backfilling it later changes a relationship's
+  shape. Child tables (`stages`, `session_logs`, `checkpoints`, `plan_slots`) reach the
+  user through their parent and don't carry it.
+- `updated_at` on every mutable table — §6 resolves those by LWW *on `updated_at`*, so
+  it's load-bearing.
+- `server_updated_at` on every synced table — `POST /api/sync { since }` needs a
+  server-authored cursor; client timestamps carry device clock skew. Indexed on the
+  growing tables.
+- `deleted_at` on the mutable tables only. Without a tombstone, sync cannot propagate a
+  delete. **Not** on the append-only tables — the past is immutable (D32).
+- Enum-ish columns are `text` + a CHECK, not `pgEnum`. Changing a Postgres enum's
+  values is the one genuinely annoying migration; text isn't.
+
+**Gotchas:**
+
+- **`.env.local` is gitignored, so it does not exist in a fresh worktree.** Copy it
+  from the main checkout before `db:migrate`.
+- **The transaction pooler (`:6543`) did handle the DDL** — no need for the
+  session-mode string. Recorded because the opposite is the common failure.
+- **IndexedDB cannot index `null`**, so `deletedAt` is not a Dexie index. Soft-deleted
+  rows are filtered in JS, and only on the bounded tables (`dayparts`, `goals`,
+  `stages`) — never on a growing one.
+- **`sessionLogs` pages on a `[date+id]` keyset, not on `date`.** Paging on `date`
+  alone silently drops the rest of a date that straddles a page boundary.
+- **`weekStart` is denormalised onto the Dexie `plan_slots` row** even though Postgres
+  keeps it only on `plan_weeks`. Intentional — the mirror exists for join-free indexed
+  reads. It is not a mistake to "fix".
+- **`stages.*eligibleDayparts` is a Dexie multiEntry index.** Scarcity-first layout
+  filters stages by eligible daypart (D9), and an array field is otherwise unindexable.
+- **Nothing enforces that `db/local` never imports `db/server`** — the two ESLint
+  guards only cover `src/core` and `src/app|features`, so a passing `npm run lint`
+  proves nothing here. Both sides map to/from `core/types.ts` at their edges by
+  convention. Worth a third guard whenever someone is next editing
+  `eslint.config.mjs` (left alone here: Track C is adding D52's colour rule to it).
+- **`user_id NOT NULL` means a `users` row must exist before any write.** First-run
+  seeding is still open (`Architecture.md` §11) and is *not* done in the migration.
+  Wave 2a needs to create it.
+- **No tests here.** The pure core is what's worth testing (CLAUDE.md), and a Dexie
+  schema test would need `fake-indexeddb` — a new dependency, which needs asking (D50).
 
 ### Track C — Design system
 *not started — `docs/design.md` is written, so this is unblocked*
