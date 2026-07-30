@@ -30,8 +30,14 @@ large fills, and text contrast meets WCAG AA.
 
 ### 2.1 Tokens
 
-Semantic names, never raw colours, in component code. Defined as CSS variables and
-exposed through the Tailwind theme.
+**Themes are data (D52).** Every colour in the app lives in **one file** as CSS
+variables. A theme is a block of values; adding one is adding a block. Components use
+semantic tokens only — **no hex, no `rgb()`, no `bg-slate-800`** — and this is
+lint-enforced, because the requirement is that *someone who is not the author* can
+reskin the app without reading component code.
+
+Token names are semantic, never chromatic: `accent-text`, not `amber-600`. Renaming the
+colour must never mean renaming the token.
 
 | Token | Light | Dark | Use |
 |---|---|---|---|

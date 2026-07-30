@@ -395,7 +395,7 @@ The field is **optional** (D5 progressive depth), so cadence-only goals — skin
 gym, meditation — are unaffected. v1 therefore includes a unit count plus the coarse
 weekly checkpoint (PRD §8.1, Option B).
 
-### D29 — Schema-complete from day one; v1 → v2 must not churn
+### D29 — Models designed to be stable under extension *(corrected — see D51)*
 
 User constraint: *"if we completed v1 and want to implement v2 instantly, that should
 be smooth — we won't be changing the UI and schema again and again."*
@@ -409,6 +409,8 @@ UI is composed so later features slot into existing surfaces.
 wrong. Mitigation — the schema covers only decisions *already made* here (D1–D28,
 which is a lot). Genuinely new ideas may still require migration, and that is
 accepted. This buys smoothness for the known roadmap, not for everything.
+
+**Corrected by D51.** "Schema-complete" was an over-reading of what the user asked for.
 
 ### D30 — Stage deadlines are advisory, never blocking
 
@@ -668,6 +670,54 @@ library** whenever it has a real reason, and must **ask before adding** any depe
 No restriction on touching the database or migrations directly — this is not a critical
 production system, and the whole project is being built by Claude Code. Guardrails
 exist to protect the *architecture* (D42), not to fence off the codebase.
+
+### D51 — Additive change is fine; *reshaping* is what must be avoided
+
+Corrects an over-reading of D29. The user's actual requirement:
+
+> *"This doesn't mean no new additions can be done, and the features coming in v2 need to
+> exist in schema even in v1. I just mean that once a model is defined, it should barely
+> get modified, so we should design models in such a way."*
+
+So the rule is **not** "build every future table now." It is:
+
+| Change | Verdict |
+|---|---|
+| New table referencing an existing one | ✅ expected, fine |
+| New nullable column | ✅ fine |
+| **Renaming or splitting an existing model** | ❌ this is what design must prevent |
+| **Moving columns between tables** | ❌ same |
+| **Changing a relationship's shape** | ❌ same |
+
+The test for what belongs in v1 is therefore: *would adding this later force a reshape?*
+
+- **`stages` — must exist in v1.** Putting cadence and duration on `goals` now and
+  extracting `stages` later would move columns between tables. That is a reshape. (D23)
+- **`goal_cycles` — may be deferred.** It is a new table with an FK to `goals`; adding it
+  in v2 changes nothing that already exists. Purely additive.
+- Everything else v1 uses is needed anyway.
+
+Design models so extension is additive. Don't build speculative tables.
+
+### D52 — Themes are data, and must be swappable by someone who isn't the author
+
+Requirement: *"if in future I want to change the theme of the app, I should be able to do
+it easily, not necessarily by myself."*
+
+That is a stronger constraint than "support dark mode." It means retheming must not
+require reading component code. So:
+
+1. **Every colour lives in one file** as CSS variables. A theme is a block of variable
+   values, nothing more. Adding a theme = adding a block.
+2. **Zero raw colour values in components.** No hex, no `rgb()`, no Tailwind colour
+   utilities like `bg-slate-800`. Only semantic tokens. **Lint-enforced**, like the other
+   two invariants (D42).
+3. **Token names stay semantic, never chromatic.** `accent-text`, not `amber-600`;
+   `on-track`, not `green`. A renamed colour must not require renaming a token.
+4. **Light and dark are just two entries**, not a hardcoded pair. The mechanism should
+   accept a third without restructuring.
+
+Someone handed the repo should be able to reskin the whole app by editing one file.
 
 ---
 
