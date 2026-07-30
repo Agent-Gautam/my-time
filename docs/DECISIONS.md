@@ -808,6 +808,54 @@ actual comparison for every single-stage goal"*), and it is never asked anything
 This does not touch stages. Multi-stage goals remain `[later]` (D23); every v1 goal has one
 implicit stage, and scope hangs off that stage exactly as before.
 
+### D57 — The projection ships on the first checkpoint; the band carries the honesty
+
+PRD §6.7 tagged measured-pace projection `[later]`, "requires ~2 weeks of data". In
+practice `scopeStatus` emits one as soon as a single checkpoint exists, because
+`measuredPerUnit = doneSessions / latestValue` is computable from one.
+
+**Keeping that, deliberately.** The projection is already a **range**, and the band
+widens as checkpoints are few (`paceProjectionBaseUncertaintyDays / checkpointCount`).
+One checkpoint therefore produces a visibly wide range, which is an honest statement of
+what is known — not a confident date. Gating it would show *nothing* for two weeks,
+and "nothing" is not more honest than "somewhere in this wide window"; it just
+withholds.
+
+This does not weaken D25. D25 forbids **confident projections without data** and
+requires a narrowing range rather than a point. A range that starts wide and narrows as
+checkpoints accumulate is exactly what D25 asks for — the "~2 weeks" in the PRD was a
+proxy for confidence, and the band measures confidence directly.
+
+The failure mode to watch is the opposite one: if the band ever renders *narrow* on
+thin data, that is a real D25 violation and the coefficients in `core/constants.ts` are
+wrong.
+
+### D58 — Deterministic ids are `text`, and the id scheme is the reason
+
+Most rows carry a random UUID. Four kinds do not — their ids are derived from their
+content so two devices independently producing "the same" row produce the **same id**,
+which is what lets last-write-wins (D45) resolve instead of duplicate:
+
+| Row | id | Why deterministic |
+|---|---|---|
+| user | `local-user` | one user, one row; a per-device UUID forks it |
+| daypart | `daypart-morning` … | two fresh devices seeding four each would sync to eight |
+| plan week | `week-<weekStart>` | D45 swaps the week wholesale — both devices must name it identically |
+| plan slot | `plan-<stageId>-<date>` | **D54 is expressed as this id colliding** |
+
+The server schema originally declared every `id` as Postgres `uuid`, so the **first
+sync push would have failed on a type error** for exactly the tables the plan lives in.
+
+**The columns follow the ids, not the other way round.** Those four `id` columns, every
+FK referencing them, and `stages.eligible_dayparts` (an array *of* daypart ids) are
+`text`. Making the ids UUIDs instead would have broken D54's identity rule and D45's
+week naming — the determinism is load-bearing.
+
+Recorded because the migration is easy to undo by accident: regenerating it with
+`drizzle-kit generate` produces per-column `ALTER`s that Postgres rejects mid-flight
+("Key columns are of incompatible types: uuid and text"). `0002` is hand-edited to drop
+the FKs, convert, and recreate them, and says so at the top.
+
 ---
 
 ## Scheduler design (proposed, being refined)

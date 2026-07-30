@@ -73,7 +73,9 @@ const WEEKDAYS = "'mon','tue','wed','thu','fri','sat','sun'";
 // ---------------------------------------------------------------------------
 
 export const users = pgTable("users", {
-  id: uuid("id").primaryKey().defaultRandom(),
+  // `text`, not `uuid` — this id is deterministic (`db/ids.ts`). No default: it is
+  // always supplied by the client so both devices agree on it.
+  id: text("id").primaryKey(),
   /** Null until auth lands; unique so it can become the login identity as-is. */
   email: text("email").unique(),
   createdAt: createdAt(),
@@ -88,8 +90,9 @@ export const users = pgTable("users", {
 export const dayparts = pgTable(
   "dayparts",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    userId: uuid("user_id")
+    // Deterministic id — see `db/ids.ts`. `text`, and never defaulted server-side.
+    id: text("id").primaryKey(),
+    userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
@@ -120,7 +123,7 @@ export const goals = pgTable(
   "goals",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    userId: uuid("user_id")
+    userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
@@ -167,7 +170,10 @@ export const stages = pgTable(
      * soft-deleted, and moving to a join table later would itself be the reshape
      * D51 forbids. Readers filter against the live daypart set.
      */
-    eligibleDayparts: uuid("eligible_dayparts").array().notNull(),
+    // Daypart ids, which are deterministic text (`db/ids.ts`) — so this array is
+    // `text[]`, matching `dayparts.id`. Not FK-enforced: Postgres cannot constrain
+    // array elements.
+    eligibleDayparts: text("eligible_dayparts").array().notNull(),
     /** Hard recovery ceiling (D20). */
     maxPerWeek: integer("max_per_week"),
     /** Optional rest gap (D20). */
@@ -223,7 +229,7 @@ export const sessionLogs = pgTable(
       .references(() => stages.id, { onDelete: "cascade" }),
     date: date("date", { mode: "string" }).notNull(),
     /** The daypart it was recorded against; kept even if boundaries change (D44). */
-    daypartId: uuid("daypart_id")
+    daypartId: text("daypart_id")
       .notNull()
       .references(() => dayparts.id),
     minutes: integer("minutes").notNull(),
@@ -276,10 +282,10 @@ export const checkIns = pgTable(
   "check_ins",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    userId: uuid("user_id")
+    userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    daypartId: uuid("daypart_id")
+    daypartId: text("daypart_id")
       .notNull()
       .references(() => dayparts.id),
     availableMinutes: integer("available_minutes").notNull(),
@@ -302,7 +308,7 @@ export const pushSubscriptions = pgTable(
   "push_subscriptions",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    userId: uuid("user_id")
+    userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     endpoint: text("endpoint").notNull().unique(),
@@ -333,8 +339,9 @@ export const pushSubscriptions = pgTable(
 export const planWeeks = pgTable(
   "plan_weeks",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    userId: uuid("user_id")
+    // Deterministic id — see `db/ids.ts`. `text`, and never defaulted server-side.
+    id: text("id").primaryKey(),
+    userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     weekStart: date("week_start", { mode: "string" }).notNull(),
@@ -352,15 +359,16 @@ export const planWeeks = pgTable(
 export const planSlots = pgTable(
   "plan_slots",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    planWeekId: uuid("plan_week_id")
+    // Deterministic id — see `db/ids.ts`. `text`, and never defaulted server-side.
+    id: text("id").primaryKey(),
+    planWeekId: text("plan_week_id")
       .notNull()
       .references(() => planWeeks.id, { onDelete: "cascade" }),
     stageId: uuid("stage_id")
       .notNull()
       .references(() => stages.id, { onDelete: "cascade" }),
     date: date("date", { mode: "string" }).notNull(),
-    daypartId: uuid("daypart_id")
+    daypartId: text("daypart_id")
       .notNull()
       .references(() => dayparts.id),
     minutes: integer("minutes").notNull(),

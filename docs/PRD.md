@@ -217,9 +217,11 @@ reporting.
   meaningful from the first logged session.
 - **[v1]** **Scope-based required line** — hours-per-unit against a target date.
   Needs a unit count and the coarse checkpoint (§6.6). (D25, D28)
-- **[later]** **Measured-pace projection** — learns hours-per-unit from real sessions
-  and projects a finish date **as a narrowing range**, never a point. Requires ~2 weeks
-  of data, so it can ship after v1 without the user ever noticing a gap. (D17, D25)
+- **[v1]** **Measured-pace projection** — learns hours-per-unit from real sessions and
+  projects a finish date **as a narrowing range**, never a point. Ships from the first
+  checkpoint: the band is wide when data is thin and narrows as checkpoints accumulate,
+  which states what is known more honestly than showing nothing for two weeks. (D17,
+  D25, **D57**)
 - **[later]** Day-one budget breakdown for staged goals: countable stages subtracted
   from total budget to expose the remainder. (D19)
 

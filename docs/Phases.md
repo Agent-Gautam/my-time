@@ -227,8 +227,19 @@ cycles · AI behind the provider seam (D39) · auth and multi-user.
 ## Conflict rules for parallel sessions
 
 - **One branch per track.** `main` stays green and deployable at all times.
-- Use **`git worktree`** so each session gets its own directory — avoids branch-switching
-  collisions on a shared checkout.
+- **One `git worktree` per track, at a FRESH PATH. Never reuse another track's
+  directory — not even a finished one.** A worktree already checked out to someone
+  else's branch is indistinguishable, from inside a new session, from a worktree
+  someone is still working in. The correct thing for that session to do is refuse, and
+  it will. Cost of a fresh path: one command. Cost of reuse: a session that stops and
+  asks, or worse, one that guesses.
+
+  ```
+  git worktree add D:/repos/my-time-<track> -b track/<name> origin/main
+  ```
+
+  Delete a worktree when its branch is merged (`git worktree remove <path>`), so the
+  next wave never has to reason about whether a stale directory is live.
 - **Frozen after Wave 0:** `package.json`, `core/types.ts`, ESLint config, `npm` scripts.
   Need a change? Say so; don't just edit it.
 - **Never touched by Wave 1:** `docs/PRD.md`, `docs/Architecture.md`, `docs/DECISIONS.md`.

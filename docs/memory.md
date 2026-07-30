@@ -886,6 +886,57 @@ band as sufficient honesty — worth deciding deliberately rather than by defaul
 
 ---
 
+### Pre-Wave-3 — id migration, and housekeeping
+
+**Migration `0002_deterministic_ids_to_text` applied to Supabase and verified.** The
+four deterministic-id columns, every FK referencing them, and `stages.eligible_dayparts`
+are now `text` (D58). New `src/db/ids.ts` holds `LOCAL_USER_ID` and documents the whole
+scheme; `db/local/seed.ts` re-exports it, and `api/push/subscribe` now upserts that id
+instead of relying on `defaultRandom()` — which `text` has no equivalent of, and which
+`tsc` caught immediately.
+
+**The generated migration did not work and the failure was silent.** `drizzle-kit
+migrate` printed a spinner and exited 0 while `__drizzle_migrations` still showed two
+rows. The real error only surfaced by running a statement by hand:
+
+```
+foreign key constraint "check_ins_daypart_id_dayparts_id_fk" cannot be implemented
+DETAIL: Key columns "daypart_id" and "id" are of incompatible types: uuid and text.
+```
+
+`drizzle-kit` emits per-column `ALTER`s, and Postgres rejects the moment an FK pair
+straddles the change. `0002` is **hand-edited** to drop the nine FKs, convert every
+column, then recreate them with their original `ON DELETE` behaviour, plus a `USING`
+clause for `uuid[] → text[]` (which has no assignment cast). It says so at the top.
+**Regenerating it blindly reintroduces the failure.**
+
+Verified by round-tripping the real ids through Postgres: `local-user`,
+`daypart-night`, `week-2026-07-27`, `plan-<uuid>-2026-07-30`, and
+`eligible_dayparts = ['daypart-night','daypart-morning']` all insert and read back.
+Test rows deleted; all tables are empty again.
+
+**Two things worth knowing that this turned up:**
+
+- `npm run db:migrate` **can report success while doing nothing.** Check
+  `drizzle.__drizzle_migrations` after any migration that alters existing columns.
+- Hard-deleting a `users` row fails: it cascades to `dayparts`, but `plan_slots`
+  references dayparts with `ON DELETE NO ACTION` by design (D44 — a slot keeps the
+  daypart it was recorded against). Dayparts are soft-deleted, so this is only
+  reachable from a manual `DELETE`, not from the app.
+
+**Projection decision (D57).** The measured-pace projection keeps shipping from the
+first checkpoint. It is already a range, and the band widens when checkpoints are few —
+showing a wide window is more honest than showing nothing for two weeks. PRD §6.7
+retagged `[v1]`. The failure mode to watch is a *narrow* band on thin data; that would
+be a real D25 violation and means the coefficients are wrong.
+
+**Housekeeping.** All seven worktrees removed — every branch is merged. `Phases.md` now
+requires **one worktree per track at a fresh path, never reuse**, with the removal
+command, because a directory checked out to someone else's branch is indistinguishable
+from a live one and a session is right to refuse it.
+
+---
+
 ## Decisions still open
 
 Tracked in `DECISIONS.md` under "Open questions". Currently outstanding:

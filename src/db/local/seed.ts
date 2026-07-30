@@ -13,11 +13,14 @@
 
 import type { Daypart, IsoDateTime } from "@/core/types";
 
+import { LOCAL_USER_ID } from "../ids";
 import { localDb } from "./schema";
 import { putDaypart, putUser } from "./mutations";
 
-/** v1 is single-user; the row exists so auth is additive rather than a rewrite (§5). */
-export const LOCAL_USER_ID = "local-user";
+// Re-exported so existing callers keep working; it is defined in `db/ids.ts`
+// alongside the other deterministic ids, because the server needs it too and must
+// not import Dexie to get it.
+export { LOCAL_USER_ID };
 
 /**
  * Morning · afternoon · evening · night, with night wrapping past midnight —
