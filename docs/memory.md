@@ -757,6 +757,60 @@ remain `[later]` (D23) — this changed nothing there.
 
 ---
 
+### Wave 2c — Push (D2)
+**Done, pending a real Android verification.** Built on `track/wave2c-push` in the
+`my-time-shell` worktree, branched fresh from `origin/main` (which already had
+Wave 2.0's foundation merged in).
+
+- `POST /api/push/subscribe` — persists `{ endpoint, keys, deviceLabel? }`,
+  upserting on `endpoint` (idempotent). No auth/user system exists yet, so it
+  resolves-or-creates the single `users` row itself (`users` is "one row in v1"
+  per Architecture.md §5) rather than depending on the `/api/sync` endpoint,
+  which hasn't been built by any track yet.
+- `GET /api/cron/remind` — guarded by `Authorization: Bearer <CRON_SECRET>`,
+  401s without it. Sends the fixed content-free payload (`"Time to check in"`,
+  empty body — D37b) to every non-deleted subscription via `web-push`. On a
+  404/410 response it **soft-deletes** that subscription (`deletedAt`), never
+  hard-deletes, matching the tombstone pattern the rest of the schema uses.
+- `src/lib/push.ts` — client helper: `isPushSupported`, `requestPushPermission`,
+  `subscribeToPush`. Calls `fetch` directly since it's `lib/`, not a component
+  (D33 only restricts `app/`/`features/`). **Not wired into any screen** —
+  that's a UI track's job; the settings screen (Wave 2a) is the natural place
+  to add a "enable notifications" toggle calling `subscribeToPush`.
+- `src/sw.ts` — added `push` and `notificationclick` listeners only, left the
+  Serwist setup untouched. `notificationclick` focuses an existing client or
+  opens `/`.
+- `.env.example` — added `VAPID_SUBJECT` (the contact identity Web Push
+  requires alongside the keypair; wasn't in the original file) and a
+  generation hint (`npx web-push generate-vapid-keys`).
+- `drizzle/manual-pg-cron-remind.sql` — **not** a drizzle-kit migration
+  (deliberately outside the numbered sequence so `db:migrate` never touches
+  it). Four `cron.schedule` calls via `pg_net`, at 05:00/12:00/17:00/21:00 UTC
+  matching the default daypart seed — apply by hand in the Supabase SQL
+  editor after enabling the `pg_cron` and `pg_net` extensions. Needs
+  `pg_cron`/`pg_net` enabled and the URL/secret placeholders filled in.
+
+**What the user still needs to do to actually verify D2:**
+1. Run `npx web-push generate-vapid-keys` and set `NEXT_PUBLIC_VAPID_PUBLIC_KEY`,
+   `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`, `CRON_SECRET` in both `.env.local` and
+   Vercel's env vars (all environments).
+2. Deploy, then enable `pg_cron`/`pg_net` in the Supabase dashboard and run
+   `drizzle/manual-pg-cron-remind.sql` with the real deployment URL and
+   `CRON_SECRET` substituted in.
+3. Wire `subscribeToPush()` into a real screen (settings is the obvious spot)
+   so a subscription actually gets created.
+4. Install the PWA on an Android phone, grant notification permission, and
+   confirm a nudge arrives at a daypart boundary — **this is the only thing
+   that proves D2 is actually done**, per the track brief.
+
+Verified locally: `npm run lint`, `npm run test` (62 tests), `npm run build`
+all pass. Manually hit both endpoints against the real Supabase dev database —
+`subscribe` upserts correctly (verified twice with the same endpoint, then
+deleted the test row), `remind` 401s without the secret and 200s with it. Did
+not send a real push message end-to-end (no subscribed device yet).
+
+---
+
 ## Decisions still open
 
 Tracked in `DECISIONS.md` under "Open questions". Currently outstanding:
