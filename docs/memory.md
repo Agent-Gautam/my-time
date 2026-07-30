@@ -935,6 +935,99 @@ requires **one worktree per track at a fresh path, never reuse**, with the remov
 command, because a directory checked out to someone else's branch is indistinguishable
 from a live one and a session is right to refuse it.
 
+### Wave 3 — Sync
+
+Branch `track/wave3-sync`. `lint` clean, **164 tests** (36 new), `build` green with
+`/api/sync` registered. Not merged to `main`.
+
+**Shipped.** `src/sync/{protocol,merge,memo,transport,push,pull,engine,index}.ts`,
+`src/app/api/sync/route.ts`, `tests/sync/{merge,push,pull,engine}.test.ts`, and
+`use-sync-status.ts` extended (not rewritten) with a real `syncing` state and
+`lastPullAt`.
+
+**`sync/merge.ts` is imported by both sides.** The route handler calls the same
+`shouldApplyWeek` the client's pull calls. The point is not tidiness: if the two halves
+each carried their own copy of "does the incoming row win?", the symptom of drift would
+be two devices that quietly never converge, with nothing to see in a log. It is pure —
+no Dexie, no Drizzle, no clock — so importing it server-side costs nothing.
+
+**The merge rules, as implemented.**
+
+| Class | Tables | Rule |
+|---|---|---|
+| append-only | `sessionLogs`, `checkpoints`, `checkIns` | union — insert if absent, **never** overwrite (D32) |
+| mutable | `users`, `dayparts`, `goals`, `stages`, `pushSubscriptions` | LWW on `updatedAt`, string compare (D53) |
+| the plan | `planWeeks` + its slots | LWW **wholesale per week** (D45) |
+
+Server-side LWW is a `setWhere` on the `ON CONFLICT DO UPDATE`, not read-compare-write:
+one statement, no race, and a losing row is not written at all — so it does not bump its
+own `server_updated_at` and re-broadcast itself to every device.
+
+**Timestamps on the wire.** `IsoDateTime` is naive local wall-clock; the columns are
+`timestamptz`. Those round-trip only if the naive string is stored *as though it were
+UTC* — `new Date(s + "Z")` in, `.toISOString().slice(0, 19)` out. The byte the client
+sent is the byte it gets back, and Postgres's `<` agrees with the client's string `<`.
+Do not "fix" this to the server's local zone.
+
+**Two termination rules, both easy to get wrong into an infinite loop.** Push stops when
+a round acks *nothing* — not when the outbox empties, because a permanently refused head
+would be re-peeked forever. Pull stops on the server's `hasMore` — not on "rows
+arrived", because the cursor is deliberately rewound one second per page (`server_updated_at`
+is stamped at statement build, not at commit, so two writes can commit out of order and
+a strict cursor would step over one permanently). Plus a 20-round hard cap.
+
+**D45 was underspecified in one place, and it is reachable.** `updatedAt` then `version`
+as tie-break is what `planner.ts` fixes — but both can tie for real: two devices opening
+the app in the same second and relaying out the same week both produce version N+1 with
+the same stamp. "Keep local" there is not convergent — A keeps A's week, B keeps B's,
+permanently and silently. Added a third key, deterministic and computed identically on
+both sides: the week's slot ids sorted and joined, lexicographically greater wins. Full
+week, still wholesale. **Not a contradiction of D45 — it completes it**, and D45's own
+"if two devices both re-lay-out, one loses entirely" is what it makes true.
+
+The same tie on a plain mutable row is left unsolved on purpose: server keeps stored,
+client keeps local, next edit on either device resolves it. Two goal edits inside one
+wall-clock second on two offline devices is not worth a lineage key (D35).
+
+**Where sync runs.** `startSync()` is called from `useSyncStatus` — the indicator is
+mounted for the whole session by definition (D46), so "the hook mounted" and "the app
+started" are the same event. Triggers: app start, `online`, `visibilitychange`, and a
+debounced `liveQuery` on outbox depth after a write. `syncNow` is deliberately **not**
+exported from `src/sync/index.ts`: there is no sync button, and the cheapest way to keep
+it that way is for the entry point not to offer one.
+
+**Known gaps, all reported rather than patched:**
+
+- **Cursors live in `localStorage`, not Dexie.** The natural home is a local-only table
+  beside `outbox`, which needs a `db/local/schema.ts` version bump that was out of
+  track. Cost: clearing site data resets cursors without clearing Dexie, so the next
+  sync re-pulls the history window and re-applies it — idempotent, but not free. That is
+  why the request carries a `historyFloor` (`LOCAL_HISTORY_WINDOW_DAYS`, so the two
+  numbers cannot disagree) capping `sessionLogs` and `checkIns`; `checkpoints` is not
+  floored because `pruneHistoryBefore` never touches it.
+- **No `bumpOutboxAttempts` in `db/local/queries.ts`.** `OutboxRow.attempts` exists and
+  nothing increments it, so `sync/push.ts` writes `localDb.outbox` directly. It belongs
+  in `queries.ts` next to `ackOutbox`.
+- **`stages`, `session_logs` and `checkpoints` carry no `user_id`** — they hang off
+  `goals`/`stages` — so the pull reads them unscoped. Correct for single-user v1; auth
+  needs a join there, which is additive.
+- **A permanently rejected outbox row is never dropped.** It keeps its FIFO place, its
+  `attempts` climb, and it shows in the pending count. Rows behind it still land (per
+  change, not per batch), so it does not block the queue — but nothing discards a write
+  the user made.
+- **`push_subscriptions` upserts on `id` while the table is unique on `endpoint`.**
+  Unreachable today: nothing writes that table locally, `api/push/subscribe` authors it
+  server-side and pull brings it down. A local write path must reuse the server's id or
+  it becomes a permanently rejected row.
+- **Server-authored `updated_at` is a UTC instant, client-authored is local wall-clock.**
+  Only the bootstrap `users` row and `api/push/subscribe`'s rows are server-authored, and
+  both compare harmlessly, but the two frames are not the same clock.
+
+**Verified against the real database:** a read-only `POST /api/sync` with an empty
+`changes[]` executed every pull query against Supabase and returned the bootstrap user
+row and nine cursors. Push SQL was rendered via `drizzle.mock` rather than executed — no
+test rows were written to the production database.
+
 ---
 
 ## Decisions still open
