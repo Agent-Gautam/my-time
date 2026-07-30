@@ -3,8 +3,9 @@
 Running record of design decisions made during discussion, before any code exists.
 Appended each round. `PRD.md`, `Architecture.md` etc. get written *from* this file.
 
-**Status:** PRD signed off. `Architecture.md` drafted. Nothing built yet.
-Remaining documents: `rules.md`, `Phases.md`, `design.md`, `memory.md`.
+**Status:** all planning documents complete — `PRD.md`, `Architecture.md`, `CLAUDE.md`
+(which replaced the planned `rules.md`, D49), `Phases.md`, `design.md`, `memory.md`.
+Build has started; see `docs/memory.md` for live state.
 
 ---
 
