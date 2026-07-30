@@ -5,7 +5,7 @@
 // an index range or an explicit page limit. `dayparts`, `goals` and `stages` are
 // bounded by the active cap (D11) and a full read of those is fine.
 
-import type { IsoDate, IsoDateTime } from "@/core/types";
+import type { GoalState, IsoDate, IsoDateTime } from "@/core/types";
 
 import {
   localDb,
@@ -14,6 +14,7 @@ import {
   type LocalDaypart,
   type LocalGoal,
   type LocalPlanSlot,
+  type LocalPlanWeek,
   type LocalSessionLog,
   type LocalStage,
   type OutboxRow,
@@ -69,6 +70,90 @@ export async function getStagesEligibleForDaypart(
     .equals(daypartId)
     .toArray();
   return alive(rows);
+}
+
+/**
+ * A goal with its stage. Every goal has exactly one implicit stage (PRD §6.3) —
+ * the protocol lives there, so a goal on its own can't be rendered or scheduled.
+ * `stage` is undefined only for a malformed row; callers should skip those rather
+ * than invent defaults.
+ */
+export interface GoalWithStage {
+  goal: LocalGoal;
+  stage: LocalStage | undefined;
+}
+
+/**
+ * Goals with their stage, ordered by tier. Pass `states` to get one slice — the
+ * goals list wants `["active", "planned"]`, and the planned backlog on its own is
+ * `["planned"]` (D31). Bounded: goals and stages are capped by D11.
+ */
+export async function getGoalsWithStage(
+  options: { states?: readonly GoalState[] } = {},
+): Promise<GoalWithStage[]> {
+  const goals = await getGoals();
+  const wanted = options.states
+    ? goals.filter((goal) => options.states!.includes(goal.state))
+    : goals;
+  if (wanted.length === 0) return [];
+
+  // Indexed on `goalId` rather than a full scan: stages accumulate with every goal
+  // ever created, dropped ones included, so the table outgrows the active cap (D47).
+  const stages = alive(
+    await localDb.stages
+      .where("goalId")
+      .anyOf(wanted.map((goal) => goal.id))
+      .toArray(),
+  );
+  const byGoal = new Map<string, LocalStage>();
+  for (const stage of stages.sort((a, b) => a.sortOrder - b.sortOrder)) {
+    if (!byGoal.has(stage.goalId)) byGoal.set(stage.goalId, stage);
+  }
+
+  return wanted.map((goal) => ({ goal, stage: byGoal.get(goal.id) }));
+}
+
+/**
+ * Per-daypart capacity against the active cap (D11), for the always-visible
+ * free-slot counts (D31).
+ *
+ * **`free` is a ceiling, never a target.** Show that a slot is free; never prompt
+ * the user to fill it (D21, D31).
+ *
+ * One bounded read of active stages rather than a `.count()` per daypart, because
+ * the count has to join goal state: dropping a goal leaves its stages `active`
+ * (`StageState` has no "dropped" member), so counting stages alone would keep
+ * reserving capacity for goals the user has already dropped. Stages and goals are
+ * both capped by D11, so a full read of them is the sanctioned case (D47).
+ */
+export interface DaypartCapacity {
+  daypartId: string;
+  activeCap: number;
+  used: number;
+  free: number;
+}
+
+export async function getDaypartCapacity(): Promise<DaypartCapacity[]> {
+  const [dayparts, activeGoals, activeStages] = await Promise.all([
+    getDayparts(),
+    getActiveGoals(),
+    getActiveStages(),
+  ]);
+
+  const activeGoalIds = new Set(activeGoals.map((goal) => goal.id));
+  const live = activeStages.filter((stage) => activeGoalIds.has(stage.goalId));
+
+  return dayparts.map((daypart) => {
+    const used = live.filter((stage) =>
+      stage.eligibleDayparts.includes(daypart.id),
+    ).length;
+    return {
+      daypartId: daypart.id,
+      activeCap: daypart.activeCap,
+      used,
+      free: Math.max(daypart.activeCap - used, 0),
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -152,6 +237,27 @@ export function getCheckpointsForStage(
     .toArray();
 }
 
+/**
+ * Recent checkpoints for several stages at once — the `checkpoints` input to
+ * `layoutWeek`.
+ *
+ * Deliberately **not** "the latest checkpoint per stage": `score.deadlinePressure`
+ * needs at least two checkpoints to measure a sustained rate, and falls back to a
+ * neutral 1.0 with fewer. Passing one per stage would leave deadline pressure
+ * permanently neutral for every scoped goal, which looks like it works and quietly
+ * doesn't. Bounded by `limitPerStage` over a stage set capped by D11.
+ */
+export async function getRecentCheckpointsForStages(
+  stageIds: readonly string[],
+  options: { limitPerStage?: number } = {},
+): Promise<LocalCheckpoint[]> {
+  const { limitPerStage = 10 } = options;
+  const perStage = await Promise.all(
+    stageIds.map((stageId) => getCheckpointsForStage(stageId, { limit: limitPerStage })),
+  );
+  return perStage.flat();
+}
+
 // ---------------------------------------------------------------------------
 // Check-ins — append-only, grows without bound
 // ---------------------------------------------------------------------------
@@ -176,6 +282,14 @@ export async function getLatestCheckIn(
 // ---------------------------------------------------------------------------
 // The plan — synced atomically per week (D45)
 // ---------------------------------------------------------------------------
+
+/** The week's version stamp, if the week has ever been laid out (D45). */
+export async function getPlanWeek(
+  weekStart: IsoDate,
+): Promise<LocalPlanWeek | undefined> {
+  const rows = await localDb.planWeeks.where("weekStart").equals(weekStart).toArray();
+  return rows[0];
+}
 
 export function getPlanSlotsForWeek(weekStart: IsoDate): Promise<LocalPlanSlot[]> {
   return localDb.planSlots

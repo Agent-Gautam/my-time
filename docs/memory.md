@@ -365,14 +365,139 @@ on merged `main`. Build compiles the worker: 24 precache entries.
 
 The four `git worktree`s are left in place for Wave 2.
 
+### Wave 2.0 — Foundation
+**Done**, on `track/wave2-foundation`. The shared layer 2a and 2b both build on.
+Wave 1 merged four disconnected pieces; this connects them. No feature UI.
+
+**Frozen signatures** — these are contracts other sessions depend on:
+
+```ts
+// lib/daypart.ts — pure, `now` always a parameter
+localNow(date?: Date): IsoDateTime            // the ONE sanctioned clock read
+currentDaypart(dayparts, now): Daypart | null
+daypartDate(daypart, now): IsoDate            // the occurrence's date — READ THIS
+daypartEndsAt(daypart, now): IsoDateTime
+minutesRemainingIn(daypart, now): number      // 0 when `now` is outside it
+daypartLengthMinutes(daypart): number
+daypartsRemainingToday(dayparts, now): Daypart[]
+eligibleDaypartsRemainingToday(dayparts, stage, now): number
+minutesOfDay(hhmm) · minutesSinceMidnight(now) · daypartContains(daypart, now)
+
+// db/local/mutations.ts — each one `rw` transaction: row + outbox, never separable
+newId(): string
+putUser · putDaypart · putGoal · putStage(row, now)
+putGoalWithStage(goal, stage, now)            // one save, both rows (PRD §6.3)
+logSession(Omit<SessionLog,"id"|"loggedAt">, now)
+putCheckpoint · putCheckIn(Omit<…>, now)
+dropGoal(goalId, now)                          // state -> "dropped", never deleted (D48)
+
+// db/local/queries.ts — added
+getGoalsWithStage({ states? }) · getDaypartCapacity() · getPlanWeek(weekStart)
+getRecentCheckpointsForStages(stageIds, { limitPerStage })
+
+// features/plan/planner.ts — the only core/ ⇄ Dexie bridge
+relayoutWeek({ now, weekStart? }): { weekStart, version, slots }
+reconcileNow({ now, daypartId, availableMinutes }): { keep, dropped }  // ReconciledSlot[]
+
+// db/local/seed.ts
+seedIfEmpty(now): Promise<boolean>            // LOCAL_USER_ID, DEFAULT_DAYPARTS
+```
+
+**The `IsoDateTime` convention — the thing most likely to be got wrong.**
+`IsoDateTime` is **local wall-clock**: `YYYY-MM-DDTHH:mm:ss`, no `Z`, no offset.
+Forced, not chosen: `Daypart.startTime`/`endTime` are wall-clock `"HH:mm"` and
+`dateUtils.dateOnly()` is `slice(0,10)`, so both only agree if the timestamp is
+local. `new Date().toISOString()` would put every user east of UTC in the wrong
+daypart and record sessions against the wrong `date` after ~18:30 local — and
+silently, since tests pass strings in directly. **Always `localNow()`.**
+
+**The night daypart's date anchor — the second thing 2b must not get wrong.**
+`layoutWeek` anchors a slot to the day its loop was on, so "Thursday night" is
+`{ date: "2026-07-30", daypartId: "night" }`. At 02:00 on the 31st the user is
+still inside that occurrence, but `dateOnly(now)` has already rolled over. Keying
+off it means checking in at 2am shows an **empty plan** — caught here by an
+end-to-end run, not by the unit tests, because the wrap is handled correctly
+*inside* `daypart.ts` and was being lost *at the seam*.
+
+So `daypartDate(daypart, now)` returns the occurrence's own date, and **every read
+or write keyed by `(date, daypartId)` must use it instead of `dateOnly(now)`**:
+
+- `reconcileNow` does (fixed).
+- **2b must use it for `logSession({ date })` and `putCheckIn({ date })`** —
+  otherwise a session done at 01:00 records against the wrong calendar day, and a
+  Sunday-night session lands in the wrong `weekStart` for cadence counting.
+
+`reconcileNow`'s cadence window (`weekStart`/`weekEnd`, and the `today` it scores
+with) follows the anchor date too, so the ordinal in "2nd of 3 sessions" counts
+against the week the slot actually belongs to.
+
+**Decisions owned here** (both documented in `planner.ts`):
+
+- **The plan's outbox row covers the whole week.** One row on `planWeeks`, payload
+  `{ week, slots }`. Never per-slot — that would let two devices interleave halves
+  of two plans (D45). Wave 3 must push and apply it as one unit.
+- **`LocalPlanWeek.version` is monotonic per `weekStart`**, from 1, incremented on
+  every local relayout. The version read, the replace and the enqueue share one
+  transaction, so two concurrent relayouts can't mint the same number. Across
+  devices it is deliberately *not* unique — the week resolves LWW wholesale on
+  `updatedAt`, with `version` as tie-break and lineage signal.
+
+**First-run seeding — resolved.** Seed defaults (the leaning in "Decisions still
+open" was right). `seedIfEmpty` writes the user row plus morning 05:00–12:00,
+afternoon 12:00–17:00, evening 17:00–21:00, night 21:00–05:00, `activeCap: 2`,
+through `putDaypart` so they queue for sync. Idempotent, and the emptiness check
+shares the transaction so concurrent calls can't double-seed. It is fired from
+`components/nav.tsx`'s mount effect — `layout.tsx` is a server component and Dexie
+is browser-only, and nav is the only client component on every route. Move it if a
+later wave adds a real client boot module.
+
+**Two `core/` findings. `src/core/**` was not edited** (frozen for this wave):
+
+1. **`layoutWeek` can emit two byte-identical slots** for one stage on one date —
+   a retained `existing` slot plus a freshly placed one. Slot ids are
+   `plan-<stageId>-<date>` with no daypart or occurrence component, so `bulkPut`
+   collapses them and the week comes up a session short with no error anywhere.
+   Reproduced: one stage, `cadenceCount: 2`, `minRestDays: null`, one existing
+   future slot → two identical slots returned. Reachable whenever cadence is
+   raised after a layout. `planner.dedupeById` contains it explicitly; the id
+   scheme is the supervisor's call.
+2. **`reconcile.ts`'s doc comment is wrong.** It says slots arrive "in priority
+   order — the order layout.ts produces", but `layoutWeek` sorts date → daypart →
+   `stageId` alphabetically, and `getPlanSlotsForDaypart` returns index order
+   regardless. `planner.reconcileNow` imposes real priority by re-scoring with the
+   same `scoreStage`. Nothing is broken; the comment is misleading.
+
+**No `core/types.ts` gaps.** One trap worth knowing though: `StageState` has no
+`"dropped"` member, so `dropGoal` leaves the goal's stages `active`. Every read
+that counts active stages must join goal state — `getDaypartCapacity` and
+`relayoutWeek` both do. A read that doesn't will keep reserving capacity for
+dropped goals.
+
+**Verified**: `lint` + `test` (89 tests, 7 files) + `build` all pass. The Dexie
+layer was additionally exercised against `fake-indexeddb` (installed `--no-save`,
+**not** added to `package.json`) — transaction nesting, version monotonicity, one
+`planWeek` row, one outbox row per week, `reconcileNow` writing nothing, capacity
+joining goal state, and the night slot resolving to the same id either side of
+midnight. **That harness is what caught the anchor bug, and it is not in the
+repo** — making it permanent needs `fake-indexeddb` as a devDependency, which is
+the supervisor's call (D50). Worth doing: unit tests over `daypart.ts` alone
+cannot see a seam bug. In-browser: first-run seeding
+produced 4 dayparts + 1 user + 5 queued outbox rows, idempotent across reloads, no
+console errors; nav is 44px targets, `sticky` top from `md`, `fixed` bottom below
+it with 80px content clearance.
+
+**Left for the supervisor:** mount Wave 2d's `<SyncStatus />` at the marked seam in
+`components/nav.tsx`.
+
 ---
 
 ## Decisions still open
 
 Tracked in `DECISIONS.md` under "Open questions". Currently outstanding:
 
-- **First-run seeding** — seed sensible default daypart boundaries, or make the user set
-  them? *(Leaning: seed defaults; boundaries are editable anyway.)*
+- ~~**First-run seeding**~~ → **resolved by Wave 2.0:** seed defaults. `db/local/seed.ts`
+  writes four dayparts on an empty device, through `putDaypart` so they sync. They are
+  editable in settings, which is what makes seeding safe.
 - **Display face** — Inter throughout, or a warmer serif for the one big number per
   screen? Not blocking.
 - **`auto` theme boundary** — does dark begin at the *night* daypart or at *evening*?
