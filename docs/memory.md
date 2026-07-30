@@ -16,9 +16,11 @@ all pass.
 **Live:** https://my-time-nu-brown.vercel.app (auto-deploys from `main`).
 All six planning documents are done.
 
-**There is still no usable app.** Wave 1 built the parts, not the product —
-there is no goal-creation UI, no check-in screen, no logging. `/` is still the
-placeholder and `/styleguide` is the only real page.
+**The daily loop is now usable** (Wave 2b, on `track/wave2b-checkin`, not yet
+merged to `main`): check-in, the packed/reasoned session list, one-tap logging,
+`/missed`, and the calm on-track summary all work end to end. **Goal creation is
+still missing** — Wave 2a (`app/goals/`, `app/settings/`) hasn't landed, so 2b's
+verification seeded a goal by hand rather than through the UI.
 
 | Document | State |
 |---|---|
@@ -32,19 +34,21 @@ placeholder and `/styleguide` is the only real page.
 
 ## Next action
 
-**Wave 2** — the features that make it an app. Per `Phases.md`:
+**Wave 2a — Settings + goals** (`app/settings/`, `app/goals/`, `features/goals/`)
+is the one piece of Wave 2 still outstanding: daypart boundaries, per-daypart
+caps, goal CRUD, cadence, eligibility, time-box, optional scope count, planned
+vs active with free-slot counts visible (D31). Until it merges, the only way to
+create a goal is by hand through `db/local/mutations.putGoalWithStage` — 2b
+verified the check-in loop this way.
 
-- **2a — Settings + goals** (`app/settings/`, `app/goals/`, `features/goals/`):
-  daypart boundaries, per-daypart caps, goal CRUD, cadence, eligibility,
-  time-box, optional scope count, planned vs active with free-slot counts
-  visible (D31).
-- **2b — Check-in + logging** (`app/page.tsx`, `features/checkin/`): the daily
-  loop, and **the first genuinely usable moment**. Depends on all four Wave 1
-  tracks, so it is the real integration point.
+Once 2a merges, the supervisor should merge 2b (`track/wave2b-checkin`) too. No
+open questions left for the supervisor from 2b — the one flag worth a second look
+later is the per-click width of `/missed`'s bounded week-scan
+(`WEEKS_PER_MISSED_SCAN = 4`), a judgement call rather than a measured one.
 
 Second-round Wave 1 work is still outstanding: **D2** (push endpoints +
-`pg_cron`) and **D3** (sync-status indicator). Then Wave 3 (sync) and Wave 4
-(tracking).
+`pg_cron`) — **D3** (sync-status indicator) is done, mounted in Wave 2.0's merge.
+Then Wave 3 (sync) and Wave 4 (tracking).
 
 ---
 
@@ -533,6 +537,106 @@ wrote its `docs/memory.md` notes into the *main* worktree instead, where they sa
 uncommitted and blocked this merge. Preserved verbatim and reapplied when 2d merged.
 Sessions should write only inside their own worktree — the same class of mistake as
 Wave 0's `git add -A`.
+### Wave 2b — Check-in + logging
+**Done.** Built in `../my-time-checkin` on `track/wave2b-checkin`. This is the daily
+loop — the first genuinely usable moment (PRD §6.5–§6.7, Architecture.md §9.2).
+
+- `src/app/page.tsx` — replaced the placeholder with `<CheckinView />`.
+- `src/app/missed/page.tsx` — new, killed sessions surfaced calmly (D20).
+- `src/features/checkin/` — new: `checkin-view.tsx` (orchestrator),
+  `session-card.tsx`, `goal-status-row.tsx`, `checkpoint-prompt.tsx`, `lib.ts`
+  (view-layer helpers: `requiredMinutesForDaypart`, `goalPaceStatus`,
+  `cadenceLevel`, `voluntaryCandidates`, `missedForWeek`/`missedOccurrencesPage`,
+  formatting, `shouldPromptCheckpoint`).
+
+**Nothing in `core/`, `db/local/`, or `features/plan/` needed to change.** Every
+query/mutation the loop needed already existed — `getGoalsWithStage`,
+`getDayparts`, `getLatestCheckpoint`, `getPlanSlotsForWeek`,
+`getSessionLogsBetween`, `logSession`, `putCheckIn`, `putCheckpoint`,
+`reconcileNow`, `relayoutWeek`. No gaps to report.
+
+**Flow, matching Architecture.md §9.2 exactly:**
+`currentDaypart` detects (user overrides via a `Select`, never forced) → the D8
+numbers (`requiredMinutesForDaypart`, `daypartLengthMinutes`, `minutesRemainingIn`,
+`daypartEndsAt`) render before any input → user states available minutes →
+`reconcileNow` packs and enriches → one tap per `SessionCard` calls `logSession`
+then `relayoutWeek` → the card's slot drops out of `keep` on the next
+`reconcileNow` (live via `useLiveQuery`, not a manual refetch). Dropped slots
+render read-only under "Won't fit today" — no buttons, since D27 forbids partial
+sessions. **Voluntary catch-up** (Architecture.md §9.3, D20) is a separate
+always-visible "Log a session" section below: any active stage not already
+logged today and not already offered above, gated by `maxPerWeek`/`minRestDays`
+where the stage sets them, logs with `source: "voluntary"`.
+
+**Decisions made at this layer, none touching `core/`:**
+- **Detected daypart is a plain derived expression, not stored state**, with a
+  separate `daypartOverride` set only once the user actually picks one. Storing
+  the detection in `useState` and syncing it via an effect trips the repo's
+  `react-hooks/set-state-in-effect` lint rule (same one Track C hit in
+  `lib/theme.ts`) — derive, don't sync.
+- **Reads use a mount-time `initialNow`; every write re-reads `localNow()`
+  fresh at the moment of the action.** The detected-daypart default and the
+  pre-check-in stat row are read-only and reviewed/corrected by the user anyway
+  (PRD §6.5), so staleness there is harmless. But `putCheckIn`, `logSession` and
+  `putCheckpoint` each call `localNow()` at click-time rather than reusing a
+  value frozen at mount — a backgrounded PWA tab reopened hours later must not
+  write a session against the daypart/date it detected when it first loaded.
+  Caught in review before merge, not by the user's manual walkthrough (which
+  didn't background the tab), so it's recorded here explicitly as the fix
+  rather than left implicit in a diff.
+- **Checkpoint prompt cadence (`shouldPromptCheckpoint`) is a local `lib.ts`
+  constant (7 days), not a `core/constants.ts` coefficient** — it is a UI-timing
+  choice ("occasionally", PRD §6.6/D13), not a scheduling input the scorer reads,
+  so it doesn't belong in the scheduler's single tunable-coefficients file.
+- **`/missed` shows both explicit skips and unlogged-past-due sessions.**
+  Architecture.md §9.3 defines missed as "an unlogged session past its daypart" —
+  the primary case is the user never opening the app for it at all, which can't
+  be read off `sessionLogs` alone. `missedForWeek` diffs a week's
+  `getPlanSlotsForWeek` against `getSessionLogsBetween`, keeping only slots whose
+  occurrence has actually ended (`daypartEndsAt` anchored at the slot's own start,
+  not "now" — the same D53 wrap-safety trick, reused rather than re-derived) and
+  no log exists for that `(stageId, date)` yet, then unions in explicit
+  `status: "skipped"` logs. **Load-bearing fact this relies on, checked against
+  `core/layout.ts` before shipping:** `layoutWeek` passes past-dated slots
+  (`pastSlots`, line 67/82) through **unconditionally**, regardless of whether
+  they've since been logged, and `relayoutWeek` never re-touches a week once it's
+  no longer the current week. So a past unlogged slot really does survive every
+  relayout — this is what makes reading `planSlots` a valid missed-detection
+  source rather than one that quietly loses its own evidence.
+- **`/missed` pagination scans weeks, not log pages.** Scans backward via
+  `missedOccurrencesPage`, bounded to `WEEKS_PER_MISSED_SCAN = 4` weeks per "Load
+  more" click and to the local retention window (`LOCAL_HISTORY_WINDOW_DAYS`,
+  D48) overall — bounded rather than unbounded (D47), but the per-click width is
+  a judgement call, not a measured one.
+
+**Verified:** `npm run lint`, `npm run test` (104 tests, unchanged — UI needs no
+tests per `CLAUDE.md`), `npm run build` all pass. Full loop tested in-browser
+manually (the Claude-in-Chrome extension would not bridge in this session despite
+a working install, matching account, and a Chrome restart — root cause not found;
+worth a look if it recurs): seeded a `Gym` goal by hand (30 min, night-only,
+`cadenceCount: 7`, scope `scopeUnitTotal: 10` "chapter", `targetDate` two months
+out), checked in on Night with 60 minutes, saw the packed session with its D14
+reason, tapped Done, watched it clear from the list via the live `reconcileNow`
+query, and got the coarse checkpoint prompt immediately after (since the seeded
+stage had a scope unit) — confirmed working end to end by the user. Also
+confirmed the "won't fit" path: checking in with fewer minutes than the box size
+correctly drops the session into "Won't fit today" with no buttons, and confirmed
+`cadenceStatus.feasible: false` ("Not reachable this week") renders correctly for
+a demo stage whose weekly count couldn't fit in the days left in the window —
+that's the scheduler being honest given the seed data, not a bug.
+
+A self-review pass after that manual walkthrough (the happy path doesn't exercise
+every branch) caught and fixed four issues before this entry was written: tapping
+"Skipped" was wrongly shrinking the remaining-time budget (fixed to decrement
+only on `done`); voluntary catch-up was entirely unimplemented despite `/missed`'s
+own copy advertising it (now built, see above); `scopeStatus.requiredPerUnit` was
+gated behind the same `projection != null` check as the measured projection, when
+D25 says the *required* line is pure arithmetic and ships from day one — only the
+*projection* waits on measured data (now rendered unconditionally in
+`GoalStatusRow` whenever non-null); and `/missed` originally read `status:
+"skipped"` only, missing the primary "never opened the app" case entirely (now
+fixed, see above).
+
 ### Wave 2d — Sync status (D3)
 **Done.** Built in `../my-time-sync` on `track/wave2d-sync`, two files, nothing else
 touched.
