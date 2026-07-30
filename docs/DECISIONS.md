@@ -450,6 +450,97 @@ The two constraints that *do* matter:
   the plan stops feeling trustworthy. Re-layout must **prefer existing placements** and
   change only what it must. Stability is a feature, not an optimisation.
 
+### D33 — Offline-first: the UI never talks to the network
+
+Requirement: task completion and viewing today's plan must work offline, since those
+are the daily-use paths.
+
+Rather than bolting offline onto a networked app, invert it: **the UI reads and writes
+only to a local IndexedDB store.** A separate sync layer moves data between local and
+server. Offline therefore isn't a feature with edge cases — it is the default path, and
+the network is the optional part.
+
+### D34 — The scheduler runs on the client, as a pure module
+
+Follows from D32 (layout is a pure function) plus D33. The plan is **derived state**,
+recomputable from goals + history, so it never needs to be stored or synced.
+
+Consequence: **check-in, plan generation, reconciliation and pace math all work fully
+offline with zero server involvement.** The server is only a sync target and a push
+sender.
+
+Also the right shape for agentic coding — the hardest logic in the app becomes a
+dependency-free TypeScript module with deterministic unit tests.
+
+### D35 — Sync is last-write-wins; no CRDT required
+
+Normally hand-rolled sync is a trap. It isn't here, because of what actually needs
+syncing:
+
+| Data | Shape | Conflict resolution |
+|---|---|---|
+| session logs | **append-only** facts | union of logs |
+| checkpoints | **append-only** | union |
+| goals / stages / settings | small, rarely edited, single user | last-write-wins |
+| the plan | **derived — never synced** (D34) | n/a |
+
+Append-only plus rare single-user edits means LWW is genuinely correct, not a
+compromise. A local outbox queue for writes plus LWW on the server is a small amount
+of code, not a sync engine.
+
+### D36 — Push notifications are required *(reverses PRD §7)*
+
+PRD §7 listed "notifications and reminders" as out of scope — *"the app is opened
+deliberately, not pushed."* The user has since required **working push notifications,
+especially on phone**, which is also why the app must be a **PWA**.
+
+`PRD.md` §7 must be corrected. The daypart check-in reminder is the obvious first use.
+
+**Platform caveat, unresolved:** Web Push works well on Android/Chrome. On iOS it
+requires **16.4+ and the PWA installed to the Home Screen**, and is less reliable.
+Whether requirement #3 is fully satisfiable depends on the phone — **needs
+confirming.**
+
+### D37 — Push scheduling cannot rely on Vercel Hobby cron
+
+Daypart reminders need roughly four triggers a day. Vercel's Hobby plan restricts cron
+jobs to about **once per day** — verify current limits before depending on it.
+
+Chosen alternative: **Supabase `pg_cron`** (available on the free tier) calling a
+Vercel endpoint on whatever schedule is needed. Keeps the service count at two.
+Fallbacks if that disappoints: GitHub Actions cron, or a Cloudflare Worker cron
+trigger.
+
+### D38 — Stack
+
+Chosen for **the author's development speed**, since the app has no hard technical
+requirements (no realtime, no scale, no heavy compute) beyond offline and push.
+
+| Layer | Choice | Why |
+|---|---|---|
+| Framework | **Next.js, App Router** | Author's home turf; first-class on Vercel |
+| Hosting | **Vercel (Hobby)** | Free; git-push deploys; previews per branch |
+| PWA / service worker | **Serwist** | Maintained Workbox wrapper for Next; `next-pwa` is stale |
+| Local store | **Dexie (IndexedDB)** | `useLiveQuery` makes local-as-source-of-truth (D33) natural |
+| Database | **Supabase Postgres** | Free; relational fits the schema; `pg_cron` (D37); auth ready when multi-user lands |
+| Migrations / queries | **Drizzle ORM** | Explicit migrations — required by D29; light on serverless |
+| Styling | **Tailwind + shadcn/ui** | Fast; `design.md` defines tokens on top |
+| Push | **Web Push** (`web-push`) | Subscriptions stored in Postgres |
+| Scheduler | **plain TypeScript module** | Pure, no deps, unit-tested (D34) |
+
+### D39 — AI is v2, with a provider fallback chain
+
+Deferred by the user. When it lands, use free tiers with fallback:
+**Groq → Gemini → OpenRouter.** Features undecided. The architecture must therefore
+keep a seam for it rather than build it — a provider interface, nothing more.
+
+### D40 — Deployed from day one
+
+*"As soon as a feature is built, it directly goes to deployment."* So `main` auto-deploys
+to production on Vercel from the very first commit, and a deployable skeleton ships
+**before** any feature work. Branch previews for anything in progress. `Phases.md`
+must therefore open with a deploy phase, not close with one.
+
 ---
 
 ## Scheduler design (proposed, being refined)

@@ -234,7 +234,9 @@ Stated explicitly so the boundary is defensible.
 
 - **Authentication, accounts, multi-user.** Single local user. (§3)
 - **Sharing, social features, accountability partners.** None, ever, in v1.
-- **Notifications and reminders.** The app is opened deliberately, not pushed.
+- ~~Notifications and reminders.~~ **Reversed — now required (D36).** Push
+  notifications on phone are a v1 requirement, which is also why the app is a PWA.
+  Platform caveat: reliable on Android; on iOS needs 16.4+ and Home Screen install.
 - **Calendar integration.** No import of external appointments or events.
 - **Per-item content tracking.** No video lists, no question banks, no lecture
   checkboxes. Time-boxes, not contents. (D12)
@@ -242,7 +244,9 @@ Stated explicitly so the boundary is defensible.
 - **Automatic carry-forward of missed sessions.** Deliberately absent. (D20)
 - **Streaks, badges, gamification.** Directly contradicts Principle 2.
 - **Mobile native app.** Later, if ever.
-- **AI-generated goal suggestions or plans.** The user brings the goals.
+- **AI features of any kind in v1.** Deferred to v2 with a provider fallback chain
+  (Groq → Gemini → OpenRouter). The architecture keeps a seam, nothing more. (D39)
+- **AI-generated goals.** The user brings the goals — this stays true even in v2.
 
 ## 8. Sign-off — settled
 
