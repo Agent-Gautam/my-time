@@ -96,6 +96,12 @@ function retainValidExisting(futureExisting: readonly PlanSlot[], plans: Map<str
       if (plan.remainingNeeded <= 0) break;
       if (!plan.stage.eligibleDayparts.includes(slot.daypartId)) continue;
       if (!isLegalDay(plan.stage, slot.date)) continue;
+      // D54, and the same rule `placeRemaining` applies. `committedDates` starts as
+      // the stage's done dates, so this also drops a slot whose session has since
+      // been logged — otherwise the day the user just completed keeps showing an
+      // outstanding session, and the output would depend on whether `existing` was
+      // passed at all (breaking §4.2 rule 2).
+      if (plan.committedDates.includes(slot.date)) continue;
       if (!respectsRest(plan.stage, slot.date, plan.committedDates)) continue;
 
       retained.push(slot);

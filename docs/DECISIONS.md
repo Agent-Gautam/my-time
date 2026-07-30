@@ -758,6 +758,33 @@ twice in one day even across two eligible dayparts. That fits the fixed time-box
 the recovery limits (D20). If a stage ever legitimately needs two sessions in one day, both
 the id scheme and this rule have to change together — it is not a one-line relaxation.
 
+The rule binds **both** placement paths, which is where the first fix was incomplete. A
+logged session and a planned slot are the same thing for one date, so a slot on a date the
+user has since completed is not retained either. Otherwise the day you just finished keeps
+showing an outstanding session, and — worse — `layoutWeek` returns a different answer for
+the same inputs depending on whether a prior plan was passed as `existing`, which breaks
+the idempotence rule in `Architecture.md` §4.2. Caught by the planner seam tests, not by
+the pure-scheduler ones.
+
+### D55 — `fake-indexeddb` is a devDependency; the `core/` ⇄ Dexie seam is tested
+
+The pure scheduler has thorough unit tests and `lib/daypart.ts` has its own. Neither can
+see a **seam** bug, and the seam is where the real ones have been:
+
+- The night-daypart anchor bug was handled correctly *inside* `daypart.ts` and lost at the
+  call site — checking in at 01:00 showed an empty plan.
+- The D54 retention bug above only appears when a prior plan meets logged history, which
+  requires an actual database round trip.
+
+So `tests/features/planner.test.ts` runs the real Dexie schema against `fake-indexeddb`
+and asserts the properties that only exist at the seam: one `planWeek` row and one outbox
+row per week however often layout runs (D45), `version` monotonic from 1, `reconcileNow`
+writing nothing (D32), the night session still resolving after midnight (D53), no partial
+sessions (D27), and a logged session actually clearing that day.
+
+The dependency is dev-only and adds nothing to the bundle. It found a real bug on the first
+run, which is the whole argument for it.
+
 ---
 
 ## Scheduler design (proposed, being refined)

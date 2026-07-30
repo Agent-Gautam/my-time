@@ -512,9 +512,21 @@ change.
    handoff note — `new Date().toISOString()` is a bug anywhere in this codebase, and
    `localNow()` is the single sanctioned clock read. The timezone-ambiguity cost is
    recorded there honestly.
-4. **`fake-indexeddb` — not added; asked the user.** The harness caught the night-anchor
-   bug that unit tests structurally cannot see, so it is worth making permanent, but D50
-   says ask before adding a dependency and nothing is broken without it.
+4. **`fake-indexeddb` — approved and now permanent (D55).** `tests/features/planner.test.ts`
+   runs the real Dexie schema against it, 11 tests over the properties that only exist at
+   the seam. **It found a real bug on its first run**, which completed the D54 fix: the
+   one-session-per-date rule was enforced in `placeRemaining` but *not* in
+   `retainValidExisting`, so a slot on a date whose session had since been logged was
+   retained. Consequences were (a) the day you just finished kept showing an outstanding
+   session and (b) `layoutWeek` returned different output for identical inputs depending
+   on whether a prior plan was passed as `existing` — an `Architecture.md` §4.2 rule 2
+   violation. Proven by running fresh vs fed-back side by side, then fixed and covered by
+   two more `core` tests. Suite is now **104 tests**.
+
+**`docs/Phases.md` corrected.** Wave 2 said "sequential-ish; two sessions at most"; it is
+2.0 plus four. The revision also records why the estimate was wrong (the shared layer was
+invisible until the Wave 1 tracks were in one tree), what Wave 1 actually cost at the
+seams, and the rule that cross-track mounts belong to the supervisor, never to a track.
 
 **Process note:** Wave 2d committed its two code files correctly on its own branch but
 wrote its `docs/memory.md` notes into the *main* worktree instead, where they sat

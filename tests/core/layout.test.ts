@@ -219,6 +219,35 @@ describe("layoutWeek — one session per stage per date", () => {
     expect(new Set(mine.map((s) => s.date)).size).toBe(2);
   });
 
+  it("does not retain an existing slot on a date whose session has since been logged", () => {
+    const st = stage({ cadenceCount: 7, eligibleDayparts: ["morning"] });
+    const thursday = "2026-07-30";
+    const history: SessionLog[] = [
+      { id: "h1", stageId: st.id, date: thursday, daypartId: "morning", minutes: 30, status: "done", source: "planned", loggedAt: `${thursday}T08:00:00` },
+    ];
+    // The plan as it stood before the session was logged — it had a Thursday slot.
+    const priorPlan = run({ stages: [st], now: `${thursday}T22:00:00` });
+    expect(priorPlan.map((s) => s.date)).toContain(thursday);
+
+    const after = run({ stages: [st], history, existing: priorPlan, now: `${thursday}T22:00:00` });
+    expect(after.map((s) => s.date)).not.toContain(thursday);
+  });
+
+  it("gives the same answer whether or not a prior plan is fed back in (§4.2 rule 2)", () => {
+    const st = stage({ cadenceCount: 7, eligibleDayparts: ["morning"] });
+    const thursday = "2026-07-30";
+    const now = `${thursday}T22:00:00`;
+    const history: SessionLog[] = [
+      { id: "h1", stageId: st.id, date: thursday, daypartId: "morning", minutes: 30, status: "done", source: "planned", loggedAt: `${thursday}T08:00:00` },
+    ];
+    const priorPlan = run({ stages: [st], now });
+
+    const fresh = run({ stages: [st], history, existing: [], now });
+    const withPrior = run({ stages: [st], history, existing: priorPlan, now });
+
+    expect(withPrior.map((s) => s.date)).toEqual(fresh.map((s) => s.date));
+  });
+
   it("returns globally unique slot ids across several competing stages", () => {
     const stages = [
       stage({ id: "stage-a", cadenceCount: 4 }),

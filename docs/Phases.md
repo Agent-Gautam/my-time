@@ -148,17 +148,61 @@ These are the collisions that would otherwise happen:
 
 ## Wave 2 — Features *(needs Wave 1)*
 
-Sequential-ish; two sessions at most.
+> **Revised after Wave 1 merged.** This section originally read *"sequential-ish; two
+> sessions at most."* That was wrong, and only visibly wrong once the four Wave 1 tracks
+> were in one tree: 2a and 2b both needed a shared layer that neither owned and that no
+> Wave 1 track had built — domain writes, daypart boundary math, and the `core/` ⇄ Dexie
+> seam. Wave 2 is therefore **2.0 plus four**, not two.
 
-**2a — Settings + goals** `app/settings/`, `app/goals/`, `features/goals/`
-Daypart boundaries with sensible seeded defaults, per-daypart caps, goal CRUD, cadence
-(frequency / fixed-days / hybrid), eligibility, time-box, optional scope count, planned
-vs active with free-slot counts always visible (D31).
+### Wave 2.0 — Foundation *(one session, alone, small)* ✅ done
 
-**2b — Check-in + logging** `app/page.tsx`, `features/checkin/`
-The daily loop. Detect daypart, state available time, show *required · length · ends at*
-(D8), packed list with reasons, one-tap done/skip. Missed sessions die to `/missed` (D20);
-voluntary catch-up credited.
+The same role Wave 0 played: freeze contracts so parallel work cannot collide. Wave 1
+merged four disconnected pieces; this is what connects them.
+
+- `src/lib/daypart.ts` — boundary math, `now` always a parameter, night wraps midnight
+- `src/db/local/mutations.ts` — domain writes, each one transaction: row **and** outbox
+  row, never separable. **Ownership of `src/db/local/` passes from Track B to here.**
+- `src/features/plan/planner.ts` — the only module bridging pure `core/` and Dexie. Owns
+  the plan's outbox granularity and `LocalPlanWeek.version` — merge semantics (D45), not
+  a UI concern
+- `src/db/local/seed.ts` — first-run dayparts, so `layoutWeek` has somewhere to place
+- `src/components/nav.tsx` + `src/app/layout.tsx` — **`layout.tsx` ownership passes from
+  Track C to here**
+- Every read query the UI tracks will need, added up front, so no later session edits
+  `queries.ts`
+
+### Then four in parallel
+
+| Track | Paths | Depends on |
+|---|---|---|
+| **2a — Settings + goals** | `app/settings/`, `app/goals/**`, `features/goals\|settings/` | 2.0 |
+| **2b — Check-in + logging** | `app/page.tsx`, `app/missed/`, `features/checkin/` | 2.0 |
+| **2c — Push (D2)** | `app/api/push/**`, `app/api/cron/**`, `lib/push.ts` | Wave 1 only |
+| **2d — Sync status (D3)** ✅ | `components/sync-status.tsx`, `hooks/use-sync-status.ts` | Wave 1 only |
+
+**2c and 2d never needed 2.0** — push needs Track B's schema and the indicator needs
+`getOutboxDepth()` plus design tokens, all merged in Wave 1. They run alongside it.
+
+**2a — Settings + goals.** Daypart boundaries, per-daypart caps, goal CRUD, cadence
+(frequency / fixed-days / hybrid), eligibility, time-box, optional scope count, planned vs
+active with free-slot counts always visible (D31). Also wires daypart-driven `auto` theme,
+which Track C shipped as an unwired stub.
+
+**2b — Check-in + logging.** The daily loop, and the first genuinely usable moment. Detect
+daypart, state available time, show *required · length · ends at* (D8), packed list with
+reasons, one-tap done/skip. Missed sessions die to `/missed` (D20); voluntary catch-up
+credited.
+
+`/plan` (the week view) is **not v1**. Architecture §8 lists the route, but PRD §6 tags no
+week-view screen `[v1]` — §6.4 requires layout to *run*, not to have a screen.
+
+### The handoff that must not be assigned
+
+A component one track builds and another mounts is the failure Wave 1 actually hit: Track
+D1 was to hand Track C a `layout.tsx` snippet, neither did it, and the merged app shipped
+with no manifest link and no service-worker registration until the supervisor added them.
+**Cross-track mounts are the supervisor's job at merge time, not a track's.** Wave 2d built
+`<SyncStatus />` and the supervisor mounted it in `nav.tsx`; that is the pattern.
 
 ## Wave 3 — Sync `src/sync/**`, `app/api/sync/`
 
@@ -203,3 +247,23 @@ point, and merge review is a second one.
 
 Expect the speed-up to come mostly from A running long while the others complete around
 it — not from a four-times multiplier.
+
+**What actually happened, for calibrating the next wave.** Wave 1's four tracks merged with
+**zero file conflicts** — path ownership worked exactly as designed, and `core/types.ts`
+came through untouched. Every problem was at the *seams*, which no track owns:
+
+- `@serwist/next` turned out incompatible with Next.js 16, so the merged tree did not build
+  at all. Neither lint nor tests caught it.
+- The D1 → C `layout.tsx` handoff simply never happened.
+- The manifest and the viewport disagreed on `theme_color`.
+- The first green-locally build **failed on Vercel**, because `useNativeEsbuild` defaults
+  differently off Windows.
+
+So: **the serialisation points are where the cost is, and integration is real work, not a
+formality.** Budget for it. Two rules came out of this and are worth keeping:
+
+1. **`npm run build` is a mandatory stop condition for every track.** Lint and tests both
+   passed on a tree whose PWA build was broken.
+2. **No track pushes to `main`.** Tracks commit on their branch; the supervisor merges,
+   integrates, verifies the deploy. Otherwise every session burns a deploy cycle
+   rediscovering the same integration bug.
