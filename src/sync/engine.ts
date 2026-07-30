@@ -222,8 +222,10 @@ async function runSync(): Promise<SyncOutcome> {
       outcome.pushed += settled.acked;
       outcome.rejected += settled.rejected.length;
       // Nothing acked means either the queue is empty or its head is stuck. Either
-      // way, re-peeking would return the same rows: stop pushing this run.
-      if (settled.acked === 0) pushing = false;
+      // way, re-peeking would return the same rows: stop pushing this run. A batch
+      // that came back short was the last one, so there is nothing to re-peek either —
+      // that check saves an empty round trip on every ordinary sync.
+      if (settled.acked === 0 || batch.changes.length < batchSize) pushing = false;
 
       // --- pull half ---
       const applied = await applyPull(response.pulled);
@@ -297,6 +299,11 @@ function onVisibilityChange(): void {
 export function startSync(): void {
   if (started || typeof window === "undefined") return;
   started = true;
+
+  // The persisted stamp, published before the first run. Without this the indicator
+  // reports "never pulled" after every reload until a sync completes, which is not
+  // what the memo store actually knows.
+  setState({ lastPullAt: resolved().memo.read().lastPullAt });
 
   window.addEventListener("online", onOnline);
   document.addEventListener("visibilitychange", onVisibilityChange);

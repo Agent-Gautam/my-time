@@ -102,7 +102,7 @@ describe("settlePush", () => {
     expect(remaining.map((row) => row.rowId)).toEqual(["goal-late"]);
   });
 
-  it("acks each seq once — a duplicate in `applied` cannot delete twice", async () => {
+  it("acks each seq once — a duplicate in `applied` is not counted twice", async () => {
     const seqs = await queueGoals(2);
     const batch = await collectPush();
 
@@ -111,9 +111,9 @@ describe("settlePush", () => {
       rejected: [],
     });
 
-    // The duplicate is counted, but the delete is idempotent and nothing else went
-    // with it.
-    expect(outcome.acked).toBe(3);
+    // Two rows queued, two rows acked. The count feeds the run's `pushed` total, so a
+    // repeated seq inflating it would report a drain that never happened.
+    expect(outcome.acked).toBe(2);
     expect(await getOutboxDepth()).toBe(0);
   });
 });

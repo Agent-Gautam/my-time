@@ -83,6 +83,19 @@ describe("a successful run", () => {
     expect([...sent]).toEqual([...sent].sort((a, b) => a - b));
   });
 
+  it("stops pushing on a short batch rather than spending an empty round trip", async () => {
+    const { transport, requests } = acceptAll();
+    install(transport); // batchSize 3
+    await queue(4);
+
+    await syncNow();
+
+    // 3 then 1 — and no third request just to be told the queue is empty.
+    expect(requests).toHaveLength(2);
+    expect(requests.map((r) => r.changes.length)).toEqual([3, 1]);
+    expect(await getOutboxDepth()).toBe(0);
+  });
+
   it("does nothing but a pull when the outbox is empty", async () => {
     const { transport, requests } = acceptAll();
     install(transport);

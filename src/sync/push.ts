@@ -76,7 +76,11 @@ export async function settlePush(
   response: Pick<SyncResponse, "applied" | "rejected">,
 ): Promise<PushOutcome> {
   const sentSeqs = new Set(batch.seqs);
-  const acked = response.applied.filter((seq) => sentSeqs.has(seq));
+  // Deduplicated as well as filtered. `bulkDelete` would shrug off a repeat, but the
+  // count is summed into the run's `pushed` total, and a run reporting that it drained
+  // more rows than the outbox ever held is exactly the kind of thing that hides a real
+  // double-ack later.
+  const acked = [...new Set(response.applied.filter((seq) => sentSeqs.has(seq)))];
   const rejected = response.rejected.filter((row) => sentSeqs.has(row.seq));
 
   if (acked.length > 0) await ackOutbox(acked);

@@ -570,11 +570,22 @@ function page<T extends { serverUpdatedAt: Date }>(
   const hasMore = rows.length > limit;
   const sent = hasMore ? rows.slice(0, limit) : rows;
 
+  let newest = since;
   let cursor = since;
   for (const row of sent) {
+    if (row.serverUpdatedAt > newest) newest = row.serverUpdatedAt;
     const rewound = new Date(row.serverUpdatedAt.getTime() - CURSOR_OVERLAP_MS);
     if (rewound > cursor) cursor = rewound;
   }
+
+  // The rewind is a safety margin, but it must never cost forward progress. If a full
+  // page's rows all sit inside the overlap window, the rewound cursor lands back at
+  // `since`, the identical page is returned on every sync, and anything past position
+  // `limit` in that window is never delivered at all — silently. When there is more to
+  // come and the rewind has bought nothing, take the un-rewound newest instead:
+  // re-delivery is cheap, a wedged cursor is not.
+  if (hasMore && cursor <= since) cursor = newest;
+
   return { rows: sent, cursor: cursorOf(cursor), hasMore };
 }
 

@@ -1023,10 +1023,14 @@ it that way is for the entry point not to offer one.
   Only the bootstrap `users` row and `api/push/subscribe`'s rows are server-authored, and
   both compare harmlessly, but the two frames are not the same clock.
 
-**Verified against the real database:** a read-only `POST /api/sync` with an empty
-`changes[]` executed every pull query against Supabase and returned the bootstrap user
-row and nine cursors. Push SQL was rendered via `drizzle.mock` rather than executed — no
-test rows were written to the production database.
+**Verification is asymmetric, and the push half is the untested one.** A read-only
+`POST /api/sync` with an empty `changes[]` ran every pull query against Supabase and came
+back with the bootstrap user row and nine cursors — that path is live-verified. The push
+path is **not**: its SQL was rendered through `drizzle.mock` and read, never executed,
+because exercising it means writing rows into the production database. So three things
+are unproven against Postgres — `setWhere` actually suppressing an update under a real
+conflict, the `planWeeks` transaction with `.for("update")`, and foreign-key ordering
+across a real multi-table batch. First real two-device sync is the test.
 
 ---
 
