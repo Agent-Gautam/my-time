@@ -1,5 +1,6 @@
 import { ThemeToggle } from "@/components/theme-toggle";
 import { DaypartSettings } from "@/features/settings/daypart-settings";
+import { NotificationSettings } from "@/features/settings/notification-settings";
 
 export default function SettingsPage() {
   return (
@@ -27,6 +28,17 @@ export default function SettingsPage() {
           </p>
         </div>
         <DaypartSettings />
+      </section>
+
+      <section className="flex flex-col gap-4">
+        <div>
+          <h2 className="text-section font-semibold text-text">Reminders</h2>
+          <p className="text-body text-text-muted">
+            A nudge at the start of each daypart. It only says it&rsquo;s time to
+            check in &mdash; never what&rsquo;s in your plan.
+          </p>
+        </div>
+        <NotificationSettings />
       </section>
     </main>
   );

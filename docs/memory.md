@@ -811,6 +811,36 @@ not send a real push message end-to-end (no subscribed device yet).
 
 ---
 
+### Wave 2c merge — push is wired, but not yet verified on a phone
+
+Merged clean. Endpoints, worker handlers, `lib/push.ts` and the `pg_cron` SQL are all
+on `main`; `/api/push/subscribe` and `/api/cron/remind` build as server routes.
+
+**The gap the supervisor closed:** nothing called `lib/push.ts`. A browser only
+prompts for notification permission in response to a user gesture, so push had no
+entry point at all — the same cross-track shape as the D1 → C `layout.tsx` handoff,
+and closed the same way (`Phases.md`, "the handoff that must not be assigned"). Added
+`features/settings/notification-settings.tsx` and a **Reminders** section in settings.
+Permission is read via `useSyncExternalStore`, matching `lib/theme.ts` and
+`use-sync-status.ts` — the first draft used effect+setState and the lint rule
+`react-hooks/set-state-in-effect` correctly rejected it.
+
+**Wave 2 is now fully merged. D2 is NOT done.** Three manual steps remain, all
+requiring credentials this session must not create:
+
+1. Generate a VAPID keypair — `npx web-push generate-vapid-keys`.
+2. Set `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`
+   (`mailto:...`) and `CRON_SECRET` locally **and in Vercel**, then redeploy — the
+   public key is inlined at build time, so a redeploy is required, not just a restart.
+3. Apply `drizzle/manual-pg-cron-remind.sql` in Supabase and set the schedule to the
+   daypart boundaries.
+
+Until then the Reminders button will fail gracefully and say so. **Track D is not done
+until a notification actually arrives on the Android phone** (D36) — that is a manual
+verification only the user can perform.
+
+---
+
 ## Decisions still open
 
 Tracked in `DECISIONS.md` under "Open questions". Currently outstanding:
