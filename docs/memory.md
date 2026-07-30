@@ -841,6 +841,51 @@ verification only the user can perform.
 
 ---
 
+### Wave 3 / Wave 4 readiness — supervisor assessment
+
+**Wave 3 (sync) has one hard blocker. Fix it before a session starts, not during.**
+
+Every `id` column in `src/db/server/schema.ts` is Postgres `uuid`, but four kinds of
+row are created locally with **deterministic non-UUID ids**:
+
+| Row | Local id | Why it is deliberate |
+|---|---|---|
+| user | `local-user` | single-user v1; a UUID per device would fork the row |
+| dayparts | `daypart-morning` … | two fresh devices seeding UUIDs then syncing = **8 dayparts** |
+| plan weeks | `week-2026-07-27` | D45 needs both devices to name the same week the same row |
+| plan slots | `plan-<stageId>-<date>` | **D54 is enforced by this id shape** |
+
+Goals, stages, session logs, checkpoints and check-ins use `newId()`
+(`crypto.randomUUID()`) and are fine.
+
+So the very first outbox flush would fail on a Postgres type error for exactly the
+tables the plan lives in. **The fix is to widen those server columns to `text`, not to
+make the ids UUIDs** — the determinism is load-bearing in all four cases, and D54's
+one-session-per-date rule is literally expressed as an id collision. That is one
+Drizzle migration (`users`, `dayparts`, `plan_weeks`, `plan_slots` and the FKs that
+reference them), reviewed and committed per D29.
+
+Everything else Wave 3 needs is in place: `outbox` with FIFO `seq` and `attempts`,
+`SYNCED_TABLES`, `updatedAt`/`deletedAt` on every mutable table, append-only tables
+carrying their own `loggedAt`/`checkedInAt`, `planWeeks.version` with documented
+semantics, and `use-sync-status.ts` with a marked seam for the real `syncing` state.
+
+**Wave 4 (tracking) is mostly already built** — 2b absorbed it. `core/pace.ts` is
+complete and `features/checkin/goal-status-row.tsx` already renders cadence
+required-vs-actual, the arithmetic scope line, and the projection as a **range**
+(D25). What is genuinely left is small: a per-goal history view, and the
+`/goals/[id]` detail page carrying the same numbers.
+
+**One scope question for Wave 4, not a bug.** PRD §6.7 tags measured-pace projection
+`[later]`, needing "~2 weeks of data", but `scopeStatus` emits a projection as soon as
+**one** checkpoint exists — `measuredPerUnit = doneSessions / latestValue`. The
+uncertainty band widens as checkpoints are few (`base / checkpointCount`), so it is
+not a confident point estimate and does not violate D25. But "one checkpoint" is a
+thin basis for a date. Either gate it on a minimum checkpoint count or accept the wide
+band as sufficient honesty — worth deciding deliberately rather than by default.
+
+---
+
 ## Decisions still open
 
 Tracked in `DECISIONS.md` under "Open questions". Currently outstanding:
