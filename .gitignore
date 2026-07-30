@@ -17,6 +17,10 @@
 /.next/
 /out/
 
+# serwist — generated from src/sw.ts at build time (next.config.ts)
+/public/sw.js
+/public/sw.js.map
+
 # production
 /build
 
