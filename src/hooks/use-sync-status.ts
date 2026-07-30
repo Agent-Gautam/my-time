@@ -1,8 +1,15 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { getOutboxDepth } from "@/db/local/queries";
+import {
+  getServerSyncEngineSnapshot,
+  getSyncEngineSnapshot,
+  startSync,
+  subscribeSyncEngine,
+} from "@/sync";
+import type { IsoDateTime } from "@/core/types";
 
 export type SyncStatus = "synced" | "syncing" | "offline" | "pending";
 
@@ -10,6 +17,9 @@ interface SyncStatusData {
   status: SyncStatus;
   pendingCount: number;
   isOnline: boolean;
+  /** When the last pull completed, or null if this device has never pulled. Local
+   *  wall-clock (D53) — the same convention as every other timestamp in the app. */
+  lastPullAt: IsoDateTime | null;
 }
 
 // Online-ness lives outside React (it is a browser event source), so it is read
@@ -39,8 +49,23 @@ const getServerOnlineSnapshot = () => true;
  * budget Android phone for a value that only changes when something is written
  * (D47).
  *
- * Wave 3 extends this with the real `syncing` state and a last-pull timestamp; the
- * shape here is the seam.
+ * Wave 3 filled in the seam this was built for. Two additions, no rewrite:
+ *
+ *   - `syncing` is now real — the engine publishes it through an external store, read
+ *     with the same `useSyncExternalStore` pattern as online-ness, `getServerSnapshot`
+ *     included so SSR doesn't throw.
+ *   - `lastPullAt` completes §6.1's definition of *synced*: "outbox empty **and last
+ *     pull recent**". The hook reports the fact; nothing here decides what "recent"
+ *     means, and nothing offers the user an action (D46).
+ *
+ * It is also where sync starts. The indicator is mounted for the whole session by
+ * definition, so "the status hook mounted" and "the app started" are the same event —
+ * which is what makes the app-start flush automatic rather than a screen's job.
+ * `startSync` is idempotent and a no-op during SSR.
+ *
+ * Precedence: offline > syncing > pending > synced. Offline stays first because a
+ * flush in flight when the network drops is not information the user can use; "your
+ * writes are queuing normally" is.
  */
 export function useSyncStatus(): SyncStatusData {
   const isOnline = useSyncExternalStore(
@@ -49,13 +74,25 @@ export function useSyncStatus(): SyncStatusData {
     getServerOnlineSnapshot,
   );
 
+  const engine = useSyncExternalStore(
+    subscribeSyncEngine,
+    getSyncEngineSnapshot,
+    getServerSyncEngineSnapshot,
+  );
+
   const pendingCount = useLiveQuery(() => getOutboxDepth(), [], 0);
+
+  useEffect(() => {
+    startSync();
+  }, []);
 
   const status: SyncStatus = !isOnline
     ? "offline"
-    : pendingCount > 0
-      ? "pending"
-      : "synced";
+    : engine.syncing
+      ? "syncing"
+      : pendingCount > 0
+        ? "pending"
+        : "synced";
 
-  return { status, pendingCount, isOnline };
+  return { status, pendingCount, isOnline, lastPullAt: engine.lastPullAt };
 }
