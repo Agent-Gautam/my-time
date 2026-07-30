@@ -123,6 +123,18 @@ instability.
 
 Applied to every numeric display without exception. Non-negotiable, and easy to forget.
 
+### 4.1.1 Durations have one format
+
+**`lib/duration.ts` renders every length of time in the app.** Under an hour stays in
+minutes (`45m`); an hour or more reads in hours (`1h 30m`), and a whole hour drops the
+minutes entirely (`2h`, never `2h 0m`).
+
+The rule exists because a quantity that renders as `150m` on one screen and `2h 30m` on
+another reads as two different things. `2h 30m` is graspable at a glance; `150m` is
+arithmetic, and this app exists to remove arithmetic.
+
+Never inline `{minutes}m` in a component. Import `formatDuration`.
+
 ### 4.2 Scale
 
 | Role | Size / weight | Notes |

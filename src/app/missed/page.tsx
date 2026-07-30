@@ -12,6 +12,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { formatDuration } from "@/lib/duration";
 import { localNow } from "@/lib/daypart";
 import { localDb } from "@/db/local/schema";
 import {
@@ -104,7 +105,7 @@ export default function MissedPage() {
                 <p className="text-body text-neutral">{row.goalName}</p>
                 <p className="text-label text-text-subtle">{formatIsoDate(row.date)}</p>
               </div>
-              <span className="numeric text-label text-neutral">{row.minutes}m</span>
+              <span className="numeric text-label text-neutral">{formatDuration(row.minutes)}</span>
             </li>
           ))}
         </ul>

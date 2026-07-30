@@ -38,6 +38,7 @@ import {
   localNow,
   minutesRemainingIn,
 } from "@/lib/daypart";
+import { formatDuration } from "@/lib/duration";
 import { getDayparts, getGoalsWithStage, getLatestCheckpoint } from "@/db/local/queries";
 import { logSession, putCheckIn } from "@/db/local/mutations";
 import type { LocalStage } from "@/db/local/schema";
@@ -70,6 +71,7 @@ export function CheckinView() {
   // exists once the user actually corrects it (PRD §6.5: "confirms or corrects").
   const detectedDaypartId = currentDaypart(dayparts, initialNow)?.id ?? dayparts[0]?.id ?? null;
   const [daypartOverride, setDaypartOverride] = useState<string | null>(null);
+  const [showDaypartPicker, setShowDaypartPicker] = useState(false);
   const selectedDaypartId = daypartOverride ?? detectedDaypartId;
   const selectedDaypart = dayparts.find((dp) => dp.id === selectedDaypartId) ?? null;
 
@@ -112,7 +114,14 @@ export function CheckinView() {
   };
 
   const promptCheckpointIfDue = async (stage: LocalStage, goalName: string, now: string) => {
-    if (!stage.scopeUnitLabel) return;
+    // Gated on exactly what `pace.scopeStatus` needs (D56). Gating on the label
+    // alone asked a gym goal "which chapter are you on?" and stored an answer
+    // nothing could ever consume — scopeStatus returns all-null without both the
+    // unit total and the target date. A goal with no scope is a pure cadence goal
+    // and is never asked anything.
+    if (!stage.scopeUnitLabel || stage.scopeUnitTotal == null || stage.targetDate == null) {
+      return;
+    }
     const latest = await getLatestCheckpoint(stage.id);
     if (shouldPromptCheckpoint(now, latest?.loggedAt)) {
       setCheckpointTarget({ stageId: stage.id, goalName, unitLabel: stage.scopeUnitLabel, now });
@@ -203,29 +212,69 @@ export function CheckinView() {
       {!activeCheckIn || !reconciled ? (
         <Card>
           <CardContent className="flex flex-col gap-4">
+            {/* The app knows the time, so it states the daypart rather than asking
+                for it. PRD §6.5 is "confirms or corrects", and a required <Select>
+                made every check-in a correction. Detection is the answer; changing
+                it is a rarely-needed escape hatch, so it stays out of the way until
+                asked for. */}
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="checkin-daypart">Daypart</Label>
-              <Select
-                value={selectedDaypartId ?? undefined}
-                onValueChange={(value) => setDaypartOverride(value as string)}
-              >
-                <SelectTrigger id="checkin-daypart" className="w-full">
-                  <SelectValue placeholder="Pick a daypart" />
-                </SelectTrigger>
-                <SelectContent>
-                  {daypartOptions.map((dp) => (
-                    <SelectItem key={dp.id} value={dp.id}>
-                      {dp.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex items-baseline justify-between gap-3">
+                <p className="text-label text-text-muted">
+                  {selectedDaypart ? (
+                    <>
+                      It&rsquo;s{" "}
+                      <span className="text-text font-medium">
+                        {capitalize(selectedDaypart.name)}
+                      </span>
+                      {!showDaypartPicker && daypartOverride != null && " (you changed this)"}
+                    </>
+                  ) : (
+                    "No dayparts set up yet."
+                  )}
+                </p>
+                {!showDaypartPicker && dayparts.length > 1 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-label h-auto shrink-0 px-2 py-1"
+                    onClick={() => setShowDaypartPicker(true)}
+                  >
+                    Change
+                  </Button>
+                )}
+              </div>
+
+              {showDaypartPicker && (
+                <>
+                  <Label htmlFor="checkin-daypart" className="sr-only">
+                    Daypart
+                  </Label>
+                  <Select
+                    value={selectedDaypartId ?? undefined}
+                    onValueChange={(value) => {
+                      setDaypartOverride(value as string);
+                      setShowDaypartPicker(false);
+                    }}
+                  >
+                    <SelectTrigger id="checkin-daypart" className="w-full">
+                      <SelectValue placeholder="Pick a daypart" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {daypartOptions.map((dp) => (
+                        <SelectItem key={dp.id} value={dp.id}>
+                          {dp.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </>
+              )}
             </div>
 
             {selectedDaypart && (
               <div className="grid grid-cols-2 gap-3 rounded-lg border border-border bg-surface-2 p-3 sm:grid-cols-4">
-                <Stat label="Required" value={`${requiredMinutes ?? 0}m`} />
-                <Stat label="Length" value={`${daypartLengthMinutes(selectedDaypart)}m`} />
+                <Stat label="Required" value={formatDuration(requiredMinutes ?? 0)} />
+                <Stat label="Length" value={formatDuration(daypartLengthMinutes(selectedDaypart))} />
                 {/* minutesRemainingIn is 0 whenever `now` isn't actually inside the
                     daypart — the normal case right after the user picks a daypart
                     other than the detected one. "—" reads as "not applicable yet";
@@ -234,7 +283,7 @@ export function CheckinView() {
                   label="Remaining"
                   value={
                     daypartContains(selectedDaypart, initialNow)
-                      ? `${minutesRemainingIn(selectedDaypart, initialNow)}m`
+                      ? formatDuration(minutesRemainingIn(selectedDaypart, initialNow))
                       : "—"
                   }
                 />
@@ -290,7 +339,7 @@ export function CheckinView() {
                     <p className="text-body text-text">{slot.goal.name}</p>
                     <p className="text-label text-text-muted">{slot.reason}</p>
                   </div>
-                  <span className="numeric text-label text-text-muted">{slot.slot.minutes}m</span>
+                  <span className="numeric text-label text-text-muted">{formatDuration(slot.slot.minutes)}</span>
                 </div>
               ))}
             </div>
@@ -322,7 +371,7 @@ export function CheckinView() {
               >
                 <div>
                   <p className="text-body text-text">{goal.name}</p>
-                  <p className="numeric text-label text-text-muted">{stage.sessionMinutes}m</p>
+                  <p className="numeric text-label text-text-muted">{formatDuration(stage.sessionMinutes)}</p>
                 </div>
                 <Button
                   variant="outline"

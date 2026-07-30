@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { getDayparts, getDaypartCapacity, getGoalsWithStage } from "@/db/local/queries";
+import { formatDuration } from "@/lib/duration";
 
 const TIER_LABEL: Record<number, string> = {
   1: "Critical",
@@ -84,7 +85,7 @@ export function GoalsList() {
                     </div>
                     <span className="text-label text-text-subtle">
                       {TIER_LABEL[goal.tier] ?? "Normal"}
-                      {stage ? ` · ${stage.sessionMinutes} min · ${describeCadence(stage.cadenceType, stage.cadenceCount)}` : ""}
+                      {stage ? ` · ${formatDuration(stage.sessionMinutes)} · ${describeCadence(stage.cadenceType, stage.cadenceCount)}` : ""}
                     </span>
                   </CardContent>
                 </Card>

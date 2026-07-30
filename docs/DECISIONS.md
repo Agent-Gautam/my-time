@@ -785,6 +785,29 @@ sessions (D27), and a logged session actually clearing that day.
 The dependency is dev-only and adds nothing to the bundle. It found a real bug on the first
 run, which is the whole argument for it.
 
+### D56 — The checkpoint prompt is gated on scope, not on a unit label
+
+Reported from manual testing: *"which chapter are you on?"* appeared on a **gym** goal,
+which reads as absurd.
+
+The prompt is gated on `stage.scopeUnitLabel` alone, but the thing it feeds —
+`pace.scopeStatus` — returns all-null unless **`scopeUnitTotal` *and* `targetDate`** are
+both set. So a goal with a label and nothing else gets asked a question whose answer is
+stored and then never used by anything. The gate and the consumer disagree.
+
+**The prompt is gated on exactly what `scopeStatus` needs: `scopeUnitTotal != null &&
+targetDate != null`.** Same condition, one source of truth.
+
+On the underlying worry — *"if a goal other than GATE has scope, how would you ask about
+it?"* — the unit label is user-defined and the question is generated from it, so a
+12-week training block asks *"which week are you on?"* That is correct, not absurd. The
+absurdity was only ever asking a goal that has **no** scope at all. Gym with no unit total
+and no target date is a pure cadence goal (PRD §6.7: *"cadence debt is the required-vs-
+actual comparison for every single-stage goal"*), and it is never asked anything.
+
+This does not touch stages. Multi-stage goals remain `[later]` (D23); every v1 goal has one
+implicit stage, and scope hangs off that stage exactly as before.
+
 ---
 
 ## Scheduler design (proposed, being refined)

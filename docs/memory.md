@@ -725,6 +725,38 @@ browser before calling the golden path confirmed.)
 
 ---
 
+### Wave 2a + 2b merge — supervisor resolutions
+
+Both merged with `--no-ff`, **zero conflicts** — paths were fully disjoint. `main` is
+green: lint, 111 tests, build, and all seven routes live.
+
+Three changes from manual testing, applied on `main` rather than sent back:
+
+1. **One duration format everywhere (`lib/duration.ts`, `design.md` §4.1.1).** Under
+   an hour reads in minutes, an hour or more in hours — `45m`, `1h 30m`, `2h` (never
+   `2h 0m`). Replaced five inlined `{minutes}m` sites across check-in, the session
+   card, `/missed` and the goals list. 7 unit tests. **Never inline `{minutes}m` in a
+   component again** — import `formatDuration`.
+2. **The daypart is stated, not asked.** Detection already worked
+   (`currentDaypart(dayparts, initialNow)`), but it was presented as a required
+   `<Select>`, which made every check-in a correction. Now: *"It's Evening"*, with a
+   quiet **Change** button that reveals the picker. PRD §6.5's "confirms or corrects"
+   is satisfied by the statement — a wrong daypart is visible at a glance.
+3. **The checkpoint prompt is gated on scope, not on a label (D56).** Reported from
+   testing: *"which chapter are you on?"* appeared on a **gym** goal. The gate was
+   `stage.scopeUnitLabel` alone, but `pace.scopeStatus` returns all-null unless
+   `scopeUnitTotal` **and** `targetDate` are both set — so a labelled-but-unscoped goal
+   was asked a question whose answer nothing could consume. Gate and consumer now share
+   one condition.
+
+**On the underlying worry** — *"how would you ask about a non-GATE goal with stages?"*
+The unit label is user-defined and the question is generated from it, so a training
+block asks *"which week are you on?"* The absurdity was only ever asking a goal with
+**no** scope; a cadence-only gym goal is now never asked anything. Multi-stage goals
+remain `[later]` (D23) — this changed nothing there.
+
+---
+
 ## Decisions still open
 
 Tracked in `DECISIONS.md` under "Open questions". Currently outstanding:

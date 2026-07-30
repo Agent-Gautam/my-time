@@ -6,6 +6,7 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import type { ReconciledSlot } from "@/features/plan/planner";
+import { formatDuration } from "@/lib/duration";
 
 export function SessionCard({
   slot,
@@ -25,7 +26,7 @@ export function SessionCard({
             <p className="text-label text-text-muted">{slot.reason}</p>
           </div>
           <span className="numeric shrink-0 text-label text-text-muted">
-            {slot.slot.minutes}m
+            {formatDuration(slot.slot.minutes)}
           </span>
         </div>
         <div className="flex gap-2">
