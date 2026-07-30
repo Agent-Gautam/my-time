@@ -82,7 +82,59 @@ rules. Track A (the scheduler) is the one to give the most capable session.
 *not started*
 
 ### Track C — Design system
-*not started — `docs/design.md` is written, so this is unblocked*
+**Done.** Built in `../my-time-design` on `track/design`.
+
+- **D52 mechanism:** every colour lives in `src/app/theme.css` as two blocks —
+  `:root, .theme-light { ... }` and `.theme-dark { ... }` — each just the token
+  table from `design.md` §2/§2.3 as hex values, nothing else. Adding a theme means
+  adding a third `.theme-<name>` block there; nothing else changes. `src/app/globals.css`
+  holds the Tailwind wiring (`@theme inline`) that maps both the app's semantic
+  tokens (`bg`, `surface`, `accent-text`, `on-track`, ...) and every shadcn slot
+  (`--primary`, `--muted`, `--destructive`, ...) onto those same variables via
+  `var()` — every value in that block is a reference, never a literal, so shadcn
+  primitives theme themselves with zero per-component work.
+- **Lint:** `eslint.config.mjs` gained a `noRawColour` block (same shape as the
+  two invariant guards) scanning `src/app/**`, `src/features/**`,
+  `src/components/**` for hex literals, `rgb()/hsl()/oklch()/...`, raw Tailwind
+  palette utilities (`bg-slate-800`), and raw `bg-black`/`text-white`. Caught two
+  real violations in the shadcn-generated `dialog.tsx`/`sheet.tsx` (`bg-black/10`
+  scrim) — added a `--scrim` token rather than leaving them as an exception.
+- **Theme switching:** mode (`light`/`dark`/`auto`) resolved before first paint by
+  an inline `<script>` in `layout.tsx`'s `<head>` (no import — must run with zero
+  bundle dependency), applying a `theme-{light,dark}` class to `<html>`.
+  `src/lib/theme.ts` holds the same resolution logic for client-side use (via
+  `useSyncExternalStore`, not effect+setState — the repo's `react-hooks/set-state-in-effect`
+  lint rule rejects the naive version) plus a stub `resolveAutoTheme` that takes an
+  optional daypart list and falls back to `prefers-color-scheme` — real daypart
+  boundaries aren't wired up yet (Track A/B own that shape); whoever wires them
+  just needs to pass a `{ name, startTime, endTime }` array in.
+- **Two easy-to-violate rules from `design.md` both caught mid-build:** shadcn's
+  generated `dialog.tsx`/`sheet.tsx` used `backdrop-blur-xs` on their overlays —
+  removed (no backdrop-filter, D-motion rule). The generated `skeleton.tsx` used
+  `animate-pulse`, which is an infinite loop — design.md §6.1 bans that outright
+  ("nothing infinite... no looping shimmer, no pulsing dots"); made it a static
+  fill instead. Worth re-checking any *future* `npx shadcn add` output against
+  both rules before merging — the generator doesn't know about either.
+- Installed in one pass (package.json is frozen after Wave 0): input, label,
+  textarea, select, checkbox, radio-group, switch, card, dialog, sheet, badge,
+  separator, tabs, tooltip, dropdown-menu, sonner, skeleton — alongside the
+  existing button. Removed `next-themes`, which the shadcn CLI pulled in as a
+  transitive dep of the `sonner` component; rewired `sonner.tsx` to use our own
+  `useThemeMode()` hook instead (D50 — didn't ask before it landed, so it came
+  back out rather than staying an unapproved dependency).
+- Inter via `next/font/google` (self-hosted, no runtime request), tabular
+  numerals as a `.numeric` utility class, type scale as named Tailwind font-size
+  tokens (`text-display` … `text-caption`) matching `design.md` §4.2 role names
+  directly. Spacing needed no override — Tailwind v4's default 4px scale already
+  matches §5's steps.
+- `/styleguide` (`src/app/styleguide/`) renders every token, the type scale, the
+  spacing scale, status colours, and every installed component, with a live
+  light/dark/auto toggle at the top. `npm run lint`, `npm run build` both pass;
+  checked manually in Chrome in both themes (dialog/sheet/toast/dropdown all
+  interactive-tested).
+- **Handoff to Track D:** layout.tsx is ready for the service-worker
+  registration snippet — Track D should hand it over rather than editing
+  `layout.tsx` directly, per the track split.
 
 ### Track D — Shell / PWA / push
 *not started*

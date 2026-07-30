@@ -1,0 +1,52 @@
+/*
+ * D52 — themes are data. Every colour the app uses lives here, and nowhere else.
+ * A theme is one block below. Adding a theme means adding a block — copy `.theme-dark`,
+ * rename the class, replace the values. Nothing outside this file changes.
+ *
+ * Token names are semantic (accent-text, on-track), never chromatic (amber-600, green).
+ * Components reference these via the Tailwind utilities wired in globals.css — they
+ * never see a literal colour, and the lint rule in eslint.config.mjs enforces that.
+ */
+
+:root,
+.theme-light {
+  --bg: #faf7f1;
+  --surface: #ffffff;
+  --surface-2: #f1ebe0;
+  --border: #e3dacb;
+  --text: #22262e;
+  --text-muted: #5c6270;
+  --text-subtle: #8a8f9a;
+  --ink: #2f455d;
+  --accent-text: #96610f;
+  --accent-fill: #f0b429;
+  --accent-fg: #241a05;
+
+  --on-track: #3f7a63;
+  --attention: #96610f;
+  --blocked: #a15843;
+  --neutral: #8a8f9a;
+
+  --scrim: rgb(47 69 93 / 20%); /* dialog/sheet backdrop dimming */
+}
+
+.theme-dark {
+  --bg: #141a26;
+  --surface: #1d283a;
+  --surface-2: #26334a;
+  --border: #33405a;
+  --text: #ebe9e6;
+  --text-muted: #a8b0bf;
+  --text-subtle: #7a8494;
+  --ink: #ebe9e6;
+  --accent-text: #d2ae38;
+  --accent-fill: #d7942a;
+  --accent-fg: #141a26;
+
+  --on-track: #6fa88c;
+  --attention: #d2ae38;
+  --blocked: #c67d64;
+  --neutral: #7a8494;
+
+  --scrim: rgb(0 0 0 / 45%);
+}
