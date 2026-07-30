@@ -566,6 +566,59 @@ of links, so it never reads as another destination (D46).
 **Seam for Wave 3:** inject the real `syncing` state and a `lastPullAt` timestamp.
 The hook's return shape is stable; extend it rather than replacing it.
 
+### Wave 2a — Settings + goals
+**Done.** Built in `../my-time-goals` on `track/wave2a-goals`.
+
+- `src/app/settings/page.tsx` + `src/features/settings/daypart-settings.tsx` —
+  per-daypart name/start/end/active-cap editor, one row per daypart, each with its
+  own dirty-tracking Save button. Saving calls `mutations.putDaypart` then
+  `planner.relayoutWeek` (a moved boundary can strand slots placed under the old
+  one). Theme toggle (already built by Track C) sits above it on the same page.
+- `src/features/goals/goal-form.tsx` — shared create/edit form for the goal +
+  its one implicit stage (PRD §6.3), saved together via `mutations.putGoalWithStage`.
+  Covers tier, state (planned/active — `dropped` is a separate destructive action,
+  never a select option), session length, all three cadence types (D26),
+  eligible-dayparts-as-a-set (D7), optional weekly max / rest gap (D20), and
+  optional scope (unit label/total/target date, D28). Submitting re-lays-out the
+  week. No blank form (O3): every field defaults sensibly (tier normal, 30 min,
+  3×/week frequency, every current daypart eligible) except name/purpose, which is
+  the one thing only the user can supply.
+- `src/features/goals/goals-list.tsx` — active/planned goals ordered by tier, with
+  **always-visible** per-daypart capacity (`"evening: 2 of 3 slots used"`, D31) —
+  reports the fact, never prompts to fill it (D21). Promotion planned→active is
+  the same edit form, manual (D31), not a separate button.
+- `src/app/goals/page.tsx`, `.../new/page.tsx`, `.../[id]/page.tsx` (Next 16 async
+  `params`) — thin pages over the two feature components above.
+- **Daypart-driven `auto` theme wired**, resolving the open question in
+  `lib/theme.ts`'s stub: `hooks/use-theme.ts` now reads dayparts live via
+  `useLiveQuery(getDayparts)` and passes them into `resolveTheme`, so `auto`
+  follows the user's own night daypart boundary instead of the OS preference
+  (design.md §3). Re-applies the resolved theme in an effect once dayparts load,
+  since the inline pre-paint script in `layout.tsx` can only guess from
+  `prefers-color-scheme` before Dexie is ready.
+
+**No new queries or mutations needed** — everything went through what Wave 2.0
+already exposed. One thing worth flagging for whoever next touches
+`db/local/queries.ts`: there is no single-goal read, so `features/goals/goal-edit.tsx`
+loads via the existing `getGoalsWithStage()` (no `states` filter) and finds the one
+row client-side. Fine at today's scale (one user, few dozen goals ever), but if that
+table stops being "bounded enough for a full read" this is the caller to revisit.
+
+**One lint-driven design choice worth keeping in mind:** the create form's
+eligible-dayparts checkbox set can't default to "everything" via a `useEffect`
+that calls `setState` once dayparts load — the repo's `react-hooks/set-state-in-effect`
+rule (same one Track C hit) rejects that. Instead `eligibleDaypartsTouched` starts
+`null` ("not yet touched") and the rendered value falls back to
+`dayparts.map(d => d.id)` until the user actually toggles one — no effect needed.
+
+**Verified:** `npm run lint`, `npm run test` (still the 104 tests from Wave 2.0 —
+UI needs none, CLAUDE.md), and `npm run build` all pass clean. `/`, `/settings`,
+`/goals`, `/goals/new` all return 200 and their server-rendered HTML contains the
+expected fields (checked via `curl`, since **the Chrome browser extension was not
+connected in this session** — no live click-through, theme-toggle, or form-submit
+verification happened. Whoever picks this up next should do that pass in an actual
+browser before calling the golden path confirmed.)
+
 ---
 
 ## Decisions still open
@@ -577,7 +630,9 @@ Tracked in `DECISIONS.md` under "Open questions". Currently outstanding:
   editable in settings, which is what makes seeding safe.
 - **Display face** — Inter throughout, or a warmer serif for the one big number per
   screen? Not blocking.
-- **`auto` theme boundary** — does dark begin at the *night* daypart or at *evening*?
+- ~~**`auto` theme boundary**~~ → **resolved by Wave 2a:** dark begins at the user's
+  own *night* daypart (whatever they've set it to), not a hardcoded clock time —
+  `hooks/use-theme.ts` reads it live from Dexie.
 - **Scheduler coefficients** — deliberately unfixed. Tuned once the app is in real daily
   use; they live in `core/constants.ts` so tuning is a one-file change.
 
