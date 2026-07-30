@@ -17,9 +17,8 @@
 /.next/
 /out/
 
-# serwist — generated from src/sw.ts at build time (next.config.ts)
-/public/sw.js
-/public/sw.js.map
+# serwist — the worker is compiled and served by app/serwist/[path]/route.ts,
+# nothing is emitted into /public
 
 # production
 /build

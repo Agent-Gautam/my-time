@@ -10,9 +10,15 @@ tracks' sections.
 
 ## Where things stand
 
-**Phase:** Wave 0 complete → Wave 1's four tracks are unblocked.
+**Phase:** Wave 1 merged into `main` (A scheduler · B data layer · C design
+system · D1 PWA shell). `main` is green: lint, 62 tests, and a production build
+all pass.
 **Live:** https://my-time-nu-brown.vercel.app (auto-deploys from `main`).
 All six planning documents are done.
+
+**There is still no usable app.** Wave 1 built the parts, not the product —
+there is no goal-creation UI, no check-in screen, no logging. `/` is still the
+placeholder and `/styleguide` is the only real page.
 
 | Document | State |
 |---|---|
@@ -26,9 +32,19 @@ All six planning documents are done.
 
 ## Next action
 
-**Wave 1** — four tracks (A scheduler, B data layer, C design system, D shell/PWA/push)
-can now start in parallel, each in its own `git worktree` per `Phases.md`'s conflict
-rules. Track A (the scheduler) is the one to give the most capable session.
+**Wave 2** — the features that make it an app. Per `Phases.md`:
+
+- **2a — Settings + goals** (`app/settings/`, `app/goals/`, `features/goals/`):
+  daypart boundaries, per-daypart caps, goal CRUD, cadence, eligibility,
+  time-box, optional scope count, planned vs active with free-slot counts
+  visible (D31).
+- **2b — Check-in + logging** (`app/page.tsx`, `features/checkin/`): the daily
+  loop, and **the first genuinely usable moment**. Depends on all four Wave 1
+  tracks, so it is the real integration point.
+
+Second-round Wave 1 work is still outstanding: **D2** (push endpoints +
+`pg_cron`) and **D3** (sync-status indicator). Then Wave 3 (sync) and Wave 4
+(tracking).
 
 ---
 
@@ -301,7 +317,46 @@ are dormant, which is exactly why they'd surface as a baffling 500 later:
   `layout.tsx` directly, per the track split.
 
 ### Track D — Shell / PWA / push
-*not started*
+**D1 done. D2 and D3 not started.**
+
+- `public/manifest.webmanifest` + 192/512 `any` and `maskable` icons.
+- `src/sw.ts` — Serwist worker: precaches the build manifest, `skipWaiting`,
+  `clientsClaim`, `navigationPreload`, default runtime caching.
+- Did not touch `src/app/layout.tsx`, per the track split — the registration
+  snippet was wired in during the Wave 1 merge instead (see below).
+
+**Still open on this track:** D2 (VAPID keypair, `POST /api/push/subscribe`,
+`GET /api/cron/remind`, Supabase `pg_cron` at daypart boundaries) and D3 (the
+sync-status indicator component). Both were always second-round work. Not done
+until a real notification lands on an Android phone.
+
+### Wave 1 merge — integration
+**Done.** Merged `B → A → C → D1` into `main` with `--no-ff`. Zero file
+conflicts: the path-ownership split in `Phases.md` held, `core/types.ts` was
+untouched by every track, and `memory.md`'s per-track headings merged cleanly.
+
+Three things the merge had to resolve, because no single track owned them:
+
+- **`@serwist/next` is incompatible with Next.js 16.** Next 16 runs Turbopack by
+  default; `@serwist/next` only injects a webpack config, and the build failed
+  with *"using Turbopack, with a `webpack` config and no `turbopack` config"*.
+  Migrated to **`@serwist/turbopack`** (already installed by Track D1, so no new
+  dependency): `withSerwist` in `next.config.ts`, the worker now compiled and
+  served by `src/app/serwist/[path]/route.ts` (which sets
+  `Service-Worker-Allowed: /`, so scope is still the whole origin), `sw.ts`
+  imports `defaultCache` from `@serwist/turbopack/worker`, and `SerwistProvider`
+  registers `/serwist/sw.js` from `layout.tsx`. Nothing is emitted into
+  `/public` any more, so the `sw.js` gitignore lines are gone.
+- **The D1 → C `layout.tsx` handoff never happened** — neither branch had it.
+  Added during the merge: `metadata.manifest`, `appleWebApp`, and the
+  `SerwistProvider` wrapper.
+- **`theme_color` disagreed** — the manifest said `#2F455D` (`ink`), the
+  `viewport.themeColor` said `#FAF7F1` (`bg`). Manifest now matches `bg`.
+
+`npm run lint`, `npm run test` (62 tests, 6 files) and `npm run build` all pass
+on merged `main`. Build compiles the worker: 24 precache entries.
+
+The four `git worktree`s are left in place for Wave 2.
 
 ---
 
@@ -331,3 +386,13 @@ Tracked in `DECISIONS.md` under "Open questions". Currently outstanding:
   (`design.md` §2.2)
 - **No `backdrop-filter` / large blurs.** Main cause of jank on budget Android.
   (`design.md` §6.1)
+- **`@serwist/next` does not work on Next.js 16** — webpack-only, and Turbopack
+  is the Next 16 default. Use `@serwist/turbopack`. The worker is a route
+  handler, not a bundler plugin, so there is no `public/sw.js`.
+- **`esbuild` is only a transitive dependency.** `@serwist/turbopack` needs it
+  (optional peer) to compile the worker; it currently resolves via
+  vitest → vite → esbuild@0.28.1. If vitest ever goes, declare `esbuild`
+  explicitly or the PWA build breaks.
+- **`npm run build` is the only check that exercises the service worker.** Lint
+  and tests both pass on a tree whose PWA build is broken. Run the build before
+  pushing to `main` — it auto-deploys (D40).

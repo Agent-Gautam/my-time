@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
+import { SerwistProvider } from "@serwist/turbopack/react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import { THEME_STORAGE_KEY } from "@/lib/theme";
@@ -13,6 +14,8 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "my-time",
   description: "Tell it your goals and how much time you have.",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: { capable: true, statusBarStyle: "default", title: "my-time" },
 };
 
 // The browser-chrome theme-color meta tag can't reference a CSS custom property,
@@ -47,8 +50,13 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
       <body className="min-h-full flex flex-col">
-        <TooltipProvider>{children}</TooltipProvider>
-        <Toaster />
+        <SerwistProvider
+          swUrl="/serwist/sw.js"
+          disable={process.env.NODE_ENV !== "production"}
+        >
+          <TooltipProvider>{children}</TooltipProvider>
+          <Toaster />
+        </SerwistProvider>
       </body>
     </html>
   );
