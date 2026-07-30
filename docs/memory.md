@@ -937,6 +937,63 @@ from a live one and a session is right to refuse it.
 
 ---
 
+### D2 — push infrastructure is live (supervisor take-over)
+
+Handed over mid-way. VAPID keys and `CRON_SECRET` were already set in Vercel; the
+deploy was failing and the Supabase step was untouched. Both now done and **verified
+end to end**, not just configured.
+
+**1. Three production deploys had been failing** with `DATABASE_URL is not set →
+Failed to collect page data for /api/cron/remind`. Two causes:
+
+- The Vercel project genuinely had no `DATABASE_URL`. Now set for production, preview
+  and development.
+- **The build should never have needed it.** `db/server/client.ts` threw from module
+  scope, and Next.js collects page data by importing every route, so an absent
+  credential failed the *compile step*. The client is now created lazily behind a proxy
+  on first property access — same single pooled connection, deferred past build.
+  Verified by building with `.env.local` moved aside entirely. This also unbreaks
+  building the repo without a database, including CI.
+
+**2. `pg_cron` + `pg_net` enabled, four jobs scheduled, chain proven.** Fired the exact
+`net.http_get` the job runs and read the response out of `net._http_response`:
+`status_code 200`, body `{"sent":0,"pruned":0}`. Zero is correct — no device has
+subscribed yet.
+
+**3. The cron SQL had a real timezone bug.** `pg_cron` evaluates schedules in the
+database timezone, which on Supabase is **UTC**, but daypart boundaries are wall-clock
+local (D53). The committed file used `0 5 * * *` for the 05:00 daypart, which in IST
+fires at **10:30 local — five and a half hours late, every day, silently.** Corrected
+to the UTC equivalents (`30 23`, `30 6`, `30 11`, `30 15`) with the conversion table in
+the file. **These do not track the dayparts table**: editing boundaries in settings
+(D44) does not reschedule anything, by design — a server-side job cannot read the
+user's dayparts without the server knowing the plan, which is the coupling D33/D34
+removed.
+
+**Gotchas worth keeping:**
+
+- **`dotenv`'s startup banner goes to stdout.** `$(node -e "require('dotenv')...")`
+  captures `◇ injected env (6) from .env.local …` *along with* the value. This silently
+  corrupted the `DATABASE_URL` pushed to Vercel — the stored value had the banner
+  prepended, and the endpoint failed with `ERR_INVALID_URL`. It also produced a
+  `PROTOCOL_ERROR` when the same trick built an `Authorization` header. Read secrets
+  with `grep '^KEY=' .env.local | cut -d= -f2-`, or pass `{quiet: true}`.
+- **A deployment reaching a terminal state is not a deployment that succeeded.** Poll
+  for `Ready` specifically; `Error` is also terminal, and the old deployment keeps
+  serving 200s in the meantime, so curl checks look green while the newest build is
+  broken.
+- **`cron.job_run_details` only reports that pg_net *queued* the request**, not the
+  HTTP result. Read `net._http_response` for status codes.
+- The `CRON_SECRET` is stored in plaintext in `cron.job.command`. Inherent to calling
+  an authenticated endpoint from pg_cron; rotating the secret means rotating it there.
+
+**What is left for the user:** open the deployed app on the Android phone, install it,
+Settings → Reminders → *Turn on reminders*, and confirm a notification arrives at the
+next daypart boundary. Until a device subscribes, `sent` stays 0. **D36 is not signed
+off until that notification lands on the phone.**
+
+---
+
 ## Decisions still open
 
 Tracked in `DECISIONS.md` under "Open questions". Currently outstanding:
