@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import { SerwistProvider } from "@serwist/turbopack/react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
+import { Nav } from "@/components/nav";
 import { THEME_STORAGE_KEY } from "@/lib/theme";
 import "./globals.css";
 
@@ -54,7 +55,15 @@ export default function RootLayout({
           swUrl="/serwist/sw.js"
           disable={process.env.NODE_ENV !== "production"}
         >
-          <TooltipProvider>{children}</TooltipProvider>
+          <TooltipProvider>
+            <Nav />
+            {/* `pb-20` clears the fixed mobile bottom bar; from `md` up the nav is
+                in flow and the padding is unnecessary. Centred max-width rather
+                than a wider grid — the content is a list (`design.md` §5). */}
+            <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col px-4 pb-20 md:pb-0">
+              {children}
+            </div>
+          </TooltipProvider>
           <Toaster />
         </SerwistProvider>
       </body>
