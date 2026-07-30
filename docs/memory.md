@@ -396,6 +396,11 @@ Tracked in `DECISIONS.md` under "Open questions". Currently outstanding:
 - **`@serwist/next` does not work on Next.js 16** — webpack-only, and Turbopack
   is the Next 16 default. Use `@serwist/turbopack`. The worker is a route
   handler, not a bundler plugin, so there is no `public/sw.js`.
+- **`src/app/serwist/[path]/route.ts` is server-only code outside the `api/**`
+  carve-out.** The D42 lint guard exempts `src/app/api/**` from the no-`fetch`
+  rule; `app/serwist/` is not exempt and doesn't need to be, because the route
+  makes no network call. Lint passing there is not permission to put
+  UI-adjacent network code under `app/serwist/`.
 - **`createSerwistRoute` needs `useNativeEsbuild: true` pinned.** It defaults to
   `false` on anything that isn't Windows, which imports `esbuild-wasm`. A local
   Windows build therefore passes while the Vercel (Linux) build dies with
