@@ -40,17 +40,20 @@ function StatusIcon({ status }: { status: SyncStatus }) {
         </svg>
       );
 
+    // Not yet reachable — Wave 3 wires it. Deliberately still: `design.md` §6.1
+    // forbids anything infinite, and a spinner on a status that must never pull
+    // attention (D46) is exactly what that rule is about.
     case "syncing":
       return (
         <svg
-          className={`${iconProps} text-attention animate-spin`}
+          className={`${iconProps} text-attention`}
           fill="none"
           viewBox="0 0 24 24"
         >
           <circle
             cx="12"
             cy="12"
-            r="10"
+            r="8"
             stroke="currentColor"
             strokeWidth="2"
             strokeDasharray="15 75"

@@ -12,6 +12,7 @@ import { CalendarCheck, ListChecks, Settings, Sun } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { localNow } from "@/lib/daypart";
 import { seedIfEmpty } from "@/db/local/seed";
+import { SyncStatus } from "@/components/sync-status";
 
 const LINKS = [
   { href: "/", label: "Today", icon: Sun },
@@ -65,10 +66,15 @@ export function Nav() {
         })}
 
         {/*
-          Seam for the sync-status indicator (Wave 2d owns `components/sync-status.tsx`;
-          the supervisor mounts it here at merge time). It is status, never an action —
-          it must not become another <li> in this list of links (D46).
+          Sync status (Wave 2d). Deliberately not an <li>: it is status, never an
+          action, and must not read as another destination in this list (D46).
+          `ml-auto` pushes it clear of the links on desktop; on the mobile bottom bar
+          the links already spread edge to edge, so it sits at the trailing edge.
         */}
+        <li aria-hidden className="hidden md:flex md:flex-1" />
+        <div className="flex shrink-0 items-center px-3">
+          <SyncStatus />
+        </div>
       </ul>
     </nav>
   );

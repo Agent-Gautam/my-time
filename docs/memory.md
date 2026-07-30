@@ -521,6 +521,38 @@ wrote its `docs/memory.md` notes into the *main* worktree instead, where they sa
 uncommitted and blocked this merge. Preserved verbatim and reapplied when 2d merged.
 Sessions should write only inside their own worktree — the same class of mistake as
 Wave 0's `git add -A`.
+### Wave 2d — Sync status (D3)
+**Done.** Built in `../my-time-sync` on `track/wave2d-sync`, two files, nothing else
+touched.
+
+- `src/hooks/use-sync-status.ts` — derives `offline` > `pending` > `synced` from
+  network state and outbox depth. `syncing` exists in the type but is unreachable
+  until Wave 3 wires it.
+- `src/components/sync-status.tsx` — icon plus count (pending only). `synced`
+  checkmark in `on-track`, `offline` in `neutral`, `pending` dot in `attention`.
+  Tabular numerals on the count (`design.md` §4.1). No button, no action (D46).
+
+**Three supervisor corrections at merge**, all in the two files 2d owned:
+
+1. **`animate-spin` removed from the `syncing` icon.** `design.md` §6.1 forbids
+   anything infinite outright — *"no looping shimmer, no pulsing dots"* — and a
+   spinner on a status that must never pull attention (D46) is exactly what that
+   rule exists for. The icon is now still.
+2. **Offline-at-load bug.** The hook seeded `isOnline: true` and only updated on
+   `online`/`offline` events. A page loaded while *already* offline fires no event,
+   so it reported "synced" until the network happened to change — wrong in the one
+   case that matters most, since offline is the default path (D33). Now read live
+   via `useSyncExternalStore`, matching the `matchMedia` pattern in `lib/theme.ts`.
+3. **2-second `setInterval` replaced with `useLiveQuery`.** A poll waking every 2s
+   on every route, forever, on a budget Android phone, for a value that only changes
+   when something is written. `dexie-react-hooks` was already installed since Wave 0,
+   so this is reactive with no new dependency (D47).
+
+**Mounted by the supervisor** at the seam in `components/nav.tsx` — outside the `<ul>`
+of links, so it never reads as another destination (D46).
+
+**Seam for Wave 3:** inject the real `syncing` state and a `lastPullAt` timestamp.
+The hook's return shape is stable; extend it rather than replacing it.
 
 ---
 
