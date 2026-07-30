@@ -80,15 +80,69 @@ Consumes `core/types.ts`, doesn't edit it. No UI, no sync logic.
 
 No business logic, no data access.
 
-### Track D — Shell, PWA, push `public/**`, service worker, `app/api/push/**`, `app/api/cron/**`
+### Track D — Shell, PWA, push — **only partly parallel, see §D deps**
 
-- `manifest.webmanifest`, icons, Serwist service worker, offline shell caching
-- VAPID keypair; `POST /api/push/subscribe`; subscriptions table writes
-- `GET /api/cron/remind` — content-free nudge (D37b), shared-secret guarded
-- Supabase `pg_cron` job hitting it at daypart boundaries (D37)
-- The persistent sync-status indicator **component only** — no sync logic yet (D46)
+`public/**`, `src/sw.ts`, `next.config.ts`, `app/api/push/**`, `app/api/cron/**`
 
-Verify a real notification arrives on Android before calling it done.
+**D1 — parallel now.** `manifest.webmanifest`, icons, Serwist service worker, offline
+shell caching, Serwist wired into `next.config.ts`.
+
+**D2 — needs Track B.** VAPID keypair, `POST /api/push/subscribe`, `GET /api/cron/remind`
+(content-free nudge, D37b, shared-secret guarded), Supabase `pg_cron` job at daypart
+boundaries (D37). All of this writes to and reads from `push_subscriptions`, which is
+Track B's schema.
+
+**D3 — needs Track C.** The persistent sync-status indicator component (D46) — it is a
+presentational component and needs design tokens to exist.
+
+Not done until a real notification arrives on an Android phone.
+
+---
+
+## Dependency reality
+
+The four tracks are **not** equally parallel. Honest graph:
+
+| Track | Starts | Blocked by | Notes |
+|---|---|---|---|
+| **A** — core | immediately | — | Genuinely isolated. Pure TS, tests only. |
+| **B** — data | immediately | — | Consumes `core/types.ts`; builds from `Architecture.md` §5. |
+| **C** — design | immediately | — | Isolated, but **gates `layout.tsx`** — start it early. |
+| **D1** — PWA shell | immediately | — | Must not touch `layout.tsx` (see below). |
+| **D2** — push | after **B** | `push_subscriptions` table | Endpoints read/write B's schema. |
+| **D3** — sync indicator | after **C** | design tokens | Presentational only. |
+
+### The A ↔ B coupling
+
+Both consume `core/types.ts`, frozen in Wave 0. But **A is the only track writing real
+logic, so A is the one that will discover gaps** — a field the scheduler needs that the
+type doesn't have. B will already have built a schema against the frozen version.
+
+Asymmetric: **A discovers, B follows.** Cheap to absorb, because the database is empty and
+regenerating a migration costs nothing — provided A **reports type gaps immediately**
+rather than at the end. B should not treat its migration as final until A's types settle.
+
+### Contested files — assign ownership, don't coordinate
+
+These are the collisions that would otherwise happen:
+
+| File | Owner | Why it's contested |
+|---|---|---|
+| `src/app/layout.tsx` | **C** | C wants fonts + theme provider + no-flash script; D wants SW registration + manifest link. **D hands C a snippet; D never edits it.** |
+| `src/app/globals.css` | **C** | Tokens and base styles. Nobody else. |
+| `tailwind.config` / `components.json` | **C** | shadcn + theme. |
+| `src/lib/utils.ts` | **C** | shadcn's `cn()`. |
+| `next.config.ts` | **D1** | Serwist plugin wraps it. |
+| `.env.example` | anyone, **append only** | B adds the DB URL, D adds VAPID keys. Additive, trivially merged. |
+| `package.json` | frozen in Wave 0 | `npx shadcn add` mutates it — C should install **every** primitive it expects in one pass. Conflicts here are additive and easy, but avoidable. |
+
+### Revised guidance
+
+- **A, B, C start together.** These three are the real parallelism.
+- **D1 can join**, provided it stays out of `layout.tsx`.
+- **D2 and D3 are second-round work**, not first-round.
+- Start **C early** rather than treating it as cosmetic — it gates `layout.tsx`, which
+  everything eventually touches.
 
 ---
 
@@ -140,7 +194,12 @@ cycles · AI behind the provider seam (D39) · auth and multi-user.
 
 ## Honest note on parallelism
 
-The real win is **Track A** — it's big, hard, and genuinely isolated. B, C and D are
-smaller and partly bounded by review time rather than build time. Four-way parallelism
-will not be four times faster, and Wave 0 is a hard serialisation point. Expect the
-speed-up to come mostly from A running while everything else proceeds.
+Real concurrency here is **three-and-a-bit, not four.** A, B, C and D1 run together; D2
+waits on B, D3 waits on C.
+
+The genuine win is **Track A** — big, hard, and the only track with no dependency in
+either direction. B and C are moderate. D1 is small. Wave 0 is a hard serialisation
+point, and merge review is a second one.
+
+Expect the speed-up to come mostly from A running long while the others complete around
+it — not from a four-times multiplier.
