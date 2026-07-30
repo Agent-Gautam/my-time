@@ -584,12 +584,90 @@ good intentions. Detail belongs in `rules.md`:
    `db/server/`. Only `sync/` and route handlers touch the network. This is what makes
    offline the default path rather than a special case (D33).
 
-### D43 — Plan slots are persisted locally despite being derived
+### D43 — Plan slots are persisted locally despite being derived *(revised — see D45)*
 
 Mild tension with D34 (the plan is derived and never synced) resolved: `plan_slots` is
 a **local-only** table. It is still derived and still never synced, but it *is*
 persisted on-device, because D32's churn rule requires re-layout to know the existing
 placements in order to prefer them. Derived-but-remembered, not stored-as-truth.
+
+**Revised by D45 — "local-only" was wrong.** Correct on persistence, wrong on scope.
+
+### D44 — Editing daypart boundaries re-lays out the remainder
+
+Resolves an `Architecture.md` §11 item. Changing boundaries at any time triggers
+re-layout for **the rest of the day and week**. Consistent with D32: boundaries are an
+input, inputs changed, regenerate.
+
+Already-logged sessions are untouched — they carry the `daypart_id` they were recorded
+against, and the past is immutable (D32).
+
+### D45 — The plan syncs across devices, atomically per week
+
+**Revises D43.** Offline-first was never meant to mean device-local. The requirement:
+check in on the phone, switch to the laptop, and every surface shows the same thing —
+with **no manual sync action**.
+
+Determinism alone does not deliver this, and the reason is worth stating because it is
+easy to get wrong:
+
+- Reconciliation depends on **available minutes**, which the user *states* at check-in.
+  That is a fact, not a derivation — but it is already a synced append-only row
+  (`check_ins`), so that part is fine.
+- Layout takes `existing` placements as an input, to minimise churn (D32). That makes
+  layout **path-dependent**: two devices with different local `existing` state
+  legitimately compute different plans. Determinism does not save you when an input
+  differs.
+
+Therefore **`plan_slots` is a synced table**, not local-only.
+
+**Synced as a whole week, atomically.** Per-slot LWW could interleave slots from two
+devices into an incoherent plan. Instead the week's plan carries one version stamp and
+the latest wins wholesale. If two offline devices both re-lay-out, one loses entirely —
+acceptable, because the plan is derived, not precious.
+
+### D46 — Sync status is always visible; sync is never an action
+
+No sync button, ever. But the state is **always on screen**: synced / syncing /
+offline / *n* pending changes.
+
+Same pattern as D31 (show the fact, never prompt the action): the user should never
+wonder whether their devices agree, and should never have to do anything about it.
+
+### D47 — Frontend performance is a requirement, not a polish item
+
+Explicitly required: **never load whole lists at once.** Applies to session history,
+logs, goal lists and the missed-session view — all of which grow without bound.
+
+Expected: paginated or virtualised lists, indexed Dexie queries with bounded ranges
+(never a full table scan into memory), route-level code splitting, and deferred loading
+of anything below the fold. This belongs in `CLAUDE.md` as a standing rule, since it is
+the kind of thing that erodes one convenient `.toArray()` at a time.
+
+### D48 — Keep all history server-side until free-tier pressure
+
+No aggressive pruning. Supabase retains full history — session logs, checkpoints,
+check-ins — until free-tier limits are actually threatened, at which point archive or
+prune. Local IndexedDB may hold a bounded recent window (D47) while the server keeps
+everything.
+
+### D49 — `rules.md` is replaced by root `CLAUDE.md`
+
+Claude Code auto-loads only `CLAUDE.md` from the repo root. A separate `docs/rules.md`
+would be a file nothing reads, which defeats its purpose. The user's call: skip
+`rules.md` entirely and write the rules **in `CLAUDE.md`**.
+
+The six planned documents therefore become: `PRD.md`, `Architecture.md`, **`CLAUDE.md`**
+(in place of `rules.md`), `Phases.md`, `design.md`, `memory.md`.
+
+### D50 — Dependencies: Claude may propose, must ask before adding
+
+The stack (D38) is the default, not a freeze. Claude Code **may suggest a better
+library** whenever it has a real reason, and must **ask before adding** any dependency.
+
+No restriction on touching the database or migrations directly — this is not a critical
+production system, and the whole project is being built by Claude Code. Guardrails
+exist to protect the *architecture* (D42), not to fence off the codebase.
 
 ---
 

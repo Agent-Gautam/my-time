@@ -162,7 +162,7 @@ Two classes of table, and the distinction matters:
 | `checkpoints` | synced, **append-only** | Coarse progress — "chapter 7" (D13) |
 | `check_ins` | synced, **append-only** | Daypart + available minutes stated by user |
 | `push_subscriptions` | synced | Web Push endpoints per device |
-| `plan_slots` | **local-only** | Current week's placements. Derived — persisted *only* to keep re-layout stable (D32 churn rule) |
+| `plan_slots` | **synced, atomic per week** | The week's placements. Derived, but synced — see §5.3 (D45) |
 | `outbox` | **local-only** | Pending writes awaiting sync |
 
 ### 5.1 Key columns
@@ -190,7 +190,27 @@ Two classes of table, and the distinction matters:
 `source = voluntary` is how catch-up gets credited against the ideal line without ever
 being imposed as debt (D20).
 
-### 5.2 A note on stages vs cycles
+### 5.2 Why the plan syncs, even though it's derived
+
+Offline-first does **not** mean device-local. Check in on the phone, open the laptop,
+and every surface must already agree — with no sync button anywhere. (D45, D46)
+
+Determinism is not sufficient for this, and the reason is easy to miss:
+
+- Reconciliation depends on **available minutes**, which you *state* at check-in. That's
+  a fact rather than a derivation — but it's already a synced append-only row
+  (`check_ins`), so it travels.
+- Layout takes `existing` placements as an input, in order to minimise churn (D32).
+  That makes layout **path-dependent**. Two devices holding different local `existing`
+  state will legitimately compute different plans. A pure function doesn't help you when
+  an input differs.
+
+So `plan_slots` syncs. **Atomically per week** — one version stamp for the whole week,
+latest wins wholesale. Per-slot LWW would interleave two devices' plans into something
+incoherent. If two offline devices both re-lay-out, one loses entirely, which is fine:
+the plan is derived, not precious.
+
+### 5.3 A note on stages vs cycles
 
 `stages.goal_id` — stages hang off the goal, not the cycle. Simpler, and it matches
 "cadence swappable without recreating the goal" (D26). **Cost:** renewing a cycle with
@@ -206,7 +226,7 @@ syncing (D35):
 |---|---|---|
 | `session_logs`, `checkpoints`, `check_ins` | append-only | **union** — no conflict possible |
 | `goals`, `stages`, `dayparts`, `settings` | small, rare edits, single user | **last-write-wins** on `updated_at` |
-| the plan | **never synced** — derived (D34) | n/a |
+| `plan_slots` | derived, but path-dependent (§5.2) | **LWW per week, atomic** (D45) |
 
 So: an outbox queue on the client, LWW on the server. Roughly two endpoints.
 
@@ -215,14 +235,44 @@ POST /api/sync   { since, changes[] }  →  { serverChanges[], serverTime }
 ```
 
 Flush triggers: app foreground, network regained, and after any local write (debounced).
-Failure is not an error state — the outbox simply retains rows and retries. **The user
-is never blocked or notified by sync**, because the UI was never waiting on it.
+Failure is not an error state — the outbox retains rows and retries. **The user is never
+blocked by sync**, because the UI was never waiting on it.
+
+### 6.1 Sync status is always visible
+
+There is no sync button (D46). But the state is permanently on screen — a small
+persistent indicator, not a transient toast:
+
+| State | Meaning |
+|---|---|
+| **synced** | outbox empty, last pull recent |
+| **syncing** | flush or pull in flight |
+| **offline** | no network; writes queuing normally |
+| **n pending** | outbox depth, when non-zero |
+
+Same pattern as free-slot visibility (D31): *show the fact, never prompt the action.*
+The user should never wonder whether their devices agree, and never have to do anything
+about it.
+
+### 6.2 Performance rules (D47)
+
+Never load a whole list. `session_logs`, `checkpoints` and the missed-session view all
+grow without bound, so:
+
+- **Bounded Dexie queries only** — indexed ranges, never `.toArray()` on a growing table.
+- **Paginated or virtualised lists** for history and missed sessions.
+- **Route-level code splitting**; defer anything below the fold.
+- Local IndexedDB keeps a **bounded recent window**; the server keeps everything (D48).
+
+This erodes one convenient `.toArray()` at a time, so it is also a standing rule in
+`CLAUDE.md`.
 
 ## 7. Enforcing the invariant
 
 The whole design rests on the UI not reaching the network, and on `core/` staying pure.
-Both are easy to violate accidentally, so they get mechanical guards — detailed in
-`rules.md`:
+Both are easy to violate accidentally, so they get mechanical guards — detailed in root
+`CLAUDE.md` (which replaces the planned `rules.md`, since Claude Code auto-loads only
+`CLAUDE.md` — D49):
 
 - `src/core/**` may not import from `db/`, `app/`, `sync/`, or `react`.
 - `src/features/**` and `src/app/**` (client components) may not import from
@@ -233,7 +283,8 @@ Both are easy to violate accidentally, so they get mechanical guards — detaile
 
 ```
 my-time/
-├── docs/                     PRD, Architecture, rules, Phases, design, memory, DECISIONS
+├── CLAUDE.md                 root, auto-loaded by Claude Code: hard rules + pointers (D49)
+├── docs/                     PRD, Architecture, Phases, design, memory, DECISIONS
 ├── drizzle/                  generated SQL migrations (reviewed, committed)
 ├── public/
 │   ├── manifest.webmanifest
@@ -318,8 +369,11 @@ Web Push, cron shared secret.
 
 ## 11. Open
 
-- **Daypart detection when boundaries shift.** If a user edits boundaries mid-day, what
-  happens to sessions already logged against the old shape? Probably nothing — logs
-  carry their `daypart_id` — but worth confirming.
-- **`plan_slots` retention.** How many past weeks to keep locally before pruning.
+- ~~Daypart boundary changes~~ → **resolved (D44):** editing boundaries at any time
+  re-lays out the remainder of the day and week. Already-logged sessions keep the
+  `daypart_id` they were recorded against — the past is immutable.
+- ~~Retention~~ → **resolved (D48):** the server keeps everything until free-tier
+  pressure; local keeps a bounded recent window (D47).
 - **First-run seeding.** Sensible default daypart boundaries, or make the user set them?
+  *(Leaning: seed sensible defaults, since an empty settings screen is a bad first
+  impression — and boundaries are editable anyway.)*
