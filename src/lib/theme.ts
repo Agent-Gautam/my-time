@@ -25,9 +25,9 @@ function getSystemTheme(): ResolvedTheme {
     : "light";
 }
 
-// Stub: daypart boundaries aren't wired up yet (they live in Track A/D's data
-// layer). Once available, pass the user's own "night" daypart here instead of
-// leaving `auto` to guess from the OS preference.
+// Wired to the user's own dayparts (D7) by hooks/use-theme.ts, which reads them
+// live from Dexie. Falls back to the OS preference until dayparts are loaded, or
+// on a fresh device with no "night" daypart yet.
 function resolveAutoTheme(now: Date, dayparts?: DaypartBoundary[]): ResolvedTheme {
   const night = dayparts?.find((d) => d.name.toLowerCase() === "night");
   if (night) {
