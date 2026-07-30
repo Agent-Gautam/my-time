@@ -501,15 +501,38 @@ requires **16.4+ and the PWA installed to the Home Screen**, and is less reliabl
 Whether requirement #3 is fully satisfiable depends on the phone — **needs
 confirming.**
 
-### D37 — Push scheduling cannot rely on Vercel Hobby cron
+### D37 — Push scheduling cannot use Vercel Hobby cron — verified
 
-Daypart reminders need roughly four triggers a day. Vercel's Hobby plan restricts cron
-jobs to about **once per day** — verify current limits before depending on it.
+Daypart reminders need roughly four triggers a day. Checked against Vercel's docs
+(usage & pricing for cron jobs, last updated 2026-06-16) rather than assumed:
 
-Chosen alternative: **Supabase `pg_cron`** (available on the free tier) calling a
-Vercel endpoint on whatever schedule is needed. Keeps the service count at two.
-Fallbacks if that disappoints: GitHub Actions cron, or a Cloudflare Worker cron
-trigger.
+| Plan | Minimum interval | Scheduling precision |
+|---|---|---|
+| **Hobby** | **once per day** | **per-hour (±59 min)** |
+| Pro | once per minute | per-minute |
+
+Two disqualifiers, not one. A more-frequent cron expression **fails at deployment**,
+and even the single permitted daily job fires anywhere inside a 59-minute window —
+useless for "your evening daypart is starting."
+
+Chosen: **Supabase `pg_cron`** (free tier) calling a Vercel endpoint on whatever
+schedule is needed. Keeps the service count at two. Fallbacks: GitHub Actions cron, or
+a Cloudflare Worker cron trigger.
+
+### D37b — Reminders are content-free nudges
+
+D34 puts the scheduler on the client, so the **server never computes the plan** — yet
+D36's push is sent from the server on a cron. At reminder time the server therefore
+cannot know that "you have 3 sessions this evening, 90 minutes."
+
+Options considered: have the client upload a precomputed summary after each layout; or
+share the pure scheduler module server-side (possible, but reintroduces the data
+coupling D33/D34 removed).
+
+**Decision for v1: send a content-free nudge** — *"time to check in."* The server needs
+no plan knowledge at all, and it matches D8: reconciliation happens *at* check-in,
+because available time is an input the app cannot know in advance. Rich notification
+content can come later via the upload-summary route if it proves worth it.
 
 ### D38 — Stack
 
@@ -526,7 +549,7 @@ requirements (no realtime, no scale, no heavy compute) beyond offline and push.
 | Migrations / queries | **Drizzle ORM** | Explicit migrations — required by D29; light on serverless |
 | Styling | **Tailwind + shadcn/ui** | Fast; `design.md` defines tokens on top |
 | Push | **Web Push** (`web-push`) | Subscriptions stored in Postgres |
-| Scheduler | **plain TypeScript module** | Pure, no deps, unit-tested (D34) |
+| Scheduler | **plain TypeScript module** | Pure, no deps, unit-tested (D34). Not a stack choice — needs its own section in `Architecture.md` defining the module boundary: inputs, outputs, what is pure and what is not. |
 
 ### D39 — AI is v2, with a provider fallback chain
 
@@ -571,7 +594,11 @@ Coefficients deliberately unfixed; tuned once the app is in real use.
   made.
 - ~~O4 — Rescheduling scope~~ → resolved by **D20**.
 - ~~O5 — Short slots~~ → resolved by **D27**.
-- **O6 — Tech stack.** Belongs to `Architecture.md` — next up.
+- ~~O6 — Tech stack~~ → resolved by **D38**.
+- **O13 — Phone OS.** Blocks `Architecture.md`. Web Push is reliable on Android/Chrome;
+  on iOS it needs 16.4+ **and** the PWA installed to the Home Screen. If iOS, the
+  install flow becomes required onboarding rather than optional polish — a structural
+  difference in the app shell. (D36)
 - ~~O7 — Ballast vs exhaustion~~ → dissolved by **D22**; there is no ballast.
 - ~~O8 — Cold start~~ → resolved by **D25**.
 - ~~O9 — Stage transitions~~ → resolved by **D27**.
