@@ -19,7 +19,7 @@
 // see the conversion.
 //
 // So: **never call `new Date().toISOString()` in this app.** Call `localNow()`.
-import type { Daypart, IsoDateTime, Stage } from "@/core/types";
+import type { Daypart, IsoDate, IsoDateTime, Stage } from "@/core/types";
 import { addDays, dateOnly } from "@/core/dateUtils";
 
 const MINUTES_PER_DAY = 1440;
@@ -105,6 +105,31 @@ export function daypartEndsAt(daypart: Daypart, now: IsoDateTime): IsoDateTime {
   // "24:00" is a legal boundary meaning midnight; normalise it to 00:00 next day.
   if (end >= MINUTES_PER_DAY) return `${addDays(date, 1)}T00:00:00`;
   return `${date}T${pad(Math.floor(end / 60))}:${pad(end % 60)}:00`;
+}
+
+/**
+ * The calendar date a daypart's *current occurrence* is anchored to — which is not
+ * always today.
+ *
+ * `layoutWeek` anchors a slot to the day its loop was on, so "Thursday night" is
+ * `{ date: "2026-07-30", daypartId: "night" }`. At 02:00 on the 31st the user is
+ * still inside that same occurrence, but `dateOnly(now)` has already rolled to the
+ * 31st. Look the plan up by `dateOnly(now)` and you find nothing: check in at 2am
+ * and your evening's plan has silently vanished.
+ *
+ * So every read or write keyed by `(date, daypartId)` must use this, not
+ * `dateOnly(now)`:
+ *   - `planner.reconcileNow` — finding the slots for this occurrence
+ *   - `logSession({ date })` / `putCheckIn({ date })` — otherwise a session done at
+ *     01:00 records against the wrong day, and a Sunday-night session lands in the
+ *     wrong `weekStart` for cadence counting
+ */
+export function daypartDate(daypart: Daypart, now: IsoDateTime): IsoDate {
+  const today = dateOnly(now);
+  if (!wraps(daypart)) return today;
+  // Post-midnight half: the occurrence began yesterday.
+  const inPostMidnightHalf = minutesSinceMidnight(now) < minutesOfDay(daypart.endTime);
+  return inPostMidnightHalf ? addDays(today, -1) : today;
 }
 
 /**

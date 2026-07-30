@@ -97,7 +97,14 @@ export async function getGoalsWithStage(
     : goals;
   if (wanted.length === 0) return [];
 
-  const stages = alive(await localDb.stages.toArray());
+  // Indexed on `goalId` rather than a full scan: stages accumulate with every goal
+  // ever created, dropped ones included, so the table outgrows the active cap (D47).
+  const stages = alive(
+    await localDb.stages
+      .where("goalId")
+      .anyOf(wanted.map((goal) => goal.id))
+      .toArray(),
+  );
   const byGoal = new Map<string, LocalStage>();
   for (const stage of stages.sort((a, b) => a.sortOrder - b.sortOrder)) {
     if (!byGoal.has(stage.goalId)) byGoal.set(stage.goalId, stage);

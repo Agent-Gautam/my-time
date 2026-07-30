@@ -33,7 +33,11 @@ import {
   type LocalPlanSlot,
   type LocalStage,
 } from "@/db/local/schema";
-import { daypartsRemainingToday, eligibleDaypartsRemainingToday } from "@/lib/daypart";
+import {
+  daypartDate,
+  daypartsRemainingToday,
+  eligibleDaypartsRemainingToday,
+} from "@/lib/daypart";
 
 /**
  * How far back layout needs history to reach. Derived rather than hardcoded:
@@ -207,30 +211,34 @@ export async function reconcileNow(input: {
   availableMinutes: number;
 }): Promise<{ keep: ReconciledSlot[]; dropped: ReconciledSlot[] }> {
   const { now, daypartId, availableMinutes } = input;
-  const today = dateOnly(now);
+
+  const dayparts = await getDayparts();
+  const daypart = dayparts.find((dp) => dp.id === daypartId);
+  if (!daypart) return { keep: [], dropped: [] };
+
+  // The occurrence's own date, which is yesterday's when a wrapping night daypart
+  // has crossed midnight — see `daypartDate`. Everything below keys off this, not
+  // `dateOnly(now)`: the cadence window follows the slot, so a Sunday-night session
+  // is still counted in Sunday's week at 01:00 on Monday.
+  const today = daypartDate(daypart, now);
   const weekStart = isoWeekStart(today);
   const weekEnd = addDays(weekStart, 6);
 
-  const [dayparts, goals, activeStages, daypartSlots, weekSlots] = await Promise.all([
-    getDayparts(),
+  const [goals, activeStages, daypartSlots, weekSlots] = await Promise.all([
     getActiveGoals(),
     getActiveStages(),
     getPlanSlotsForDaypart(today, daypartId),
     getPlanSlotsForWeek(weekStart),
   ]);
-
-  const daypart = dayparts.find((dp) => dp.id === daypartId);
   const goalsById = new Map(goals.map((goal) => [goal.id, goal]));
   const stagesById = new Map(activeStages.map((stage) => [stage.id, stage]));
 
   // Slots whose stage or goal has since gone away can't be rendered or reasoned
   // about; they disappear at the next relayout.
-  const renderable = daypart
-    ? daypartSlots.filter((slot) => {
-        const stage = stagesById.get(slot.stageId);
-        return stage != null && goalsById.has(stage.goalId);
-      })
-    : [];
+  const renderable = daypartSlots.filter((slot) => {
+    const stage = stagesById.get(slot.stageId);
+    return stage != null && goalsById.has(stage.goalId);
+  });
 
   if (renderable.length === 0) return { keep: [], dropped: [] };
 
@@ -288,7 +296,7 @@ export async function reconcileNow(input: {
     const context: ExplainContext = {
       goal,
       stage,
-      daypart: daypart!,
+      daypart,
       ordinal: position >= 0 ? position + 1 : 1,
       totalThisWindow: Math.max(stageWeekSlots.length, 1),
       daysLeftInWindow: Math.max(diffDays(weekEnd, today) + 1, 1),
@@ -297,7 +305,7 @@ export async function reconcileNow(input: {
       ),
     };
 
-    return { slot: local, goal, stage, daypart: daypart!, reason: explainSlot(slot, context) };
+    return { slot: local, goal, stage, daypart, reason: explainSlot(slot, context) };
   };
 
   return { keep: keep.map(enrich), dropped: dropped.map(enrich) };

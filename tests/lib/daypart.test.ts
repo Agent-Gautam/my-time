@@ -7,6 +7,7 @@ import type { Daypart } from "@/core/types";
 import {
   currentDaypart,
   daypartContains,
+  daypartDate,
   daypartEndsAt,
   daypartLengthMinutes,
   daypartsRemainingToday,
@@ -128,9 +129,38 @@ describe("daypartsRemainingToday", () => {
     expect(ids).toEqual(["morning", "afternoon", "evening", "night"]);
   });
 
-  it("keeps only night in the small hours, since the rest of it is still ahead", () => {
+  it("keeps every daypart in the small hours — night is current, the rest are ahead", () => {
     const ids = daypartsRemainingToday(DEFAULTS, "2026-07-30T02:00:00").map((d) => d.id);
     expect(ids).toEqual(["morning", "afternoon", "evening", "night"]);
+  });
+});
+
+describe("daypartDate", () => {
+  it("anchors a plain daypart to today", () => {
+    expect(daypartDate(MORNING, "2026-07-30T06:30:00")).toBe("2026-07-30");
+    expect(daypartDate(AFTERNOON, "2026-07-30T13:00:00")).toBe("2026-07-30");
+  });
+
+  it("anchors the pre-midnight half of night to today", () => {
+    expect(daypartDate(NIGHT, "2026-07-30T22:30:00")).toBe("2026-07-30");
+    expect(daypartDate(NIGHT, "2026-07-30T23:59:00")).toBe("2026-07-30");
+  });
+
+  it("anchors the post-midnight half of night to YESTERDAY", () => {
+    // Still Thursday night's occurrence, even though the calendar says Friday.
+    // Reading the plan by today's date here finds nothing at all.
+    expect(daypartDate(NIGHT, "2026-07-31T00:01:00")).toBe("2026-07-30");
+    expect(daypartDate(NIGHT, "2026-07-31T02:00:00")).toBe("2026-07-30");
+    expect(daypartDate(NIGHT, "2026-07-31T04:59:00")).toBe("2026-07-30");
+  });
+
+  it("rolls back to today once the wrap has ended", () => {
+    expect(daypartDate(NIGHT, "2026-07-31T05:00:00")).toBe("2026-07-31");
+  });
+
+  it("keeps a Sunday-night session in Sunday's week after midnight", () => {
+    // 2026-08-02 is a Sunday; 01:00 Monday still belongs to Sunday's cadence week.
+    expect(daypartDate(NIGHT, "2026-08-03T01:00:00")).toBe("2026-08-02");
   });
 });
 

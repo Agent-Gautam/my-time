@@ -375,6 +375,7 @@ Wave 1 merged four disconnected pieces; this connects them. No feature UI.
 // lib/daypart.ts — pure, `now` always a parameter
 localNow(date?: Date): IsoDateTime            // the ONE sanctioned clock read
 currentDaypart(dayparts, now): Daypart | null
+daypartDate(daypart, now): IsoDate            // the occurrence's date — READ THIS
 daypartEndsAt(daypart, now): IsoDateTime
 minutesRemainingIn(daypart, now): number      // 0 when `now` is outside it
 daypartLengthMinutes(daypart): number
@@ -409,6 +410,26 @@ Forced, not chosen: `Daypart.startTime`/`endTime` are wall-clock `"HH:mm"` and
 local. `new Date().toISOString()` would put every user east of UTC in the wrong
 daypart and record sessions against the wrong `date` after ~18:30 local — and
 silently, since tests pass strings in directly. **Always `localNow()`.**
+
+**The night daypart's date anchor — the second thing 2b must not get wrong.**
+`layoutWeek` anchors a slot to the day its loop was on, so "Thursday night" is
+`{ date: "2026-07-30", daypartId: "night" }`. At 02:00 on the 31st the user is
+still inside that occurrence, but `dateOnly(now)` has already rolled over. Keying
+off it means checking in at 2am shows an **empty plan** — caught here by an
+end-to-end run, not by the unit tests, because the wrap is handled correctly
+*inside* `daypart.ts` and was being lost *at the seam*.
+
+So `daypartDate(daypart, now)` returns the occurrence's own date, and **every read
+or write keyed by `(date, daypartId)` must use it instead of `dateOnly(now)`**:
+
+- `reconcileNow` does (fixed).
+- **2b must use it for `logSession({ date })` and `putCheckIn({ date })`** —
+  otherwise a session done at 01:00 records against the wrong calendar day, and a
+  Sunday-night session lands in the wrong `weekStart` for cadence counting.
+
+`reconcileNow`'s cadence window (`weekStart`/`weekEnd`, and the `today` it scores
+with) follows the anchor date too, so the ordinal in "2nd of 3 sessions" counts
+against the week the slot actually belongs to.
 
 **Decisions owned here** (both documented in `planner.ts`):
 
@@ -452,12 +473,15 @@ that counts active stages must join goal state — `getDaypartCapacity` and
 `relayoutWeek` both do. A read that doesn't will keep reserving capacity for
 dropped goals.
 
-**Verified**: `lint` + `test` (84 tests, 7 files) + `build` all pass. The Dexie
+**Verified**: `lint` + `test` (89 tests, 7 files) + `build` all pass. The Dexie
 layer was additionally exercised against `fake-indexeddb` (installed `--no-save`,
 **not** added to `package.json`) — transaction nesting, version monotonicity, one
 `planWeek` row, one outbox row per week, `reconcileNow` writing nothing, capacity
-joining goal state. Making that a permanent test needs `fake-indexeddb` as a
-devDependency, which is the supervisor's call (D50). In-browser: first-run seeding
+joining goal state, and the night slot resolving to the same id either side of
+midnight. **That harness is what caught the anchor bug, and it is not in the
+repo** — making it permanent needs `fake-indexeddb` as a devDependency, which is
+the supervisor's call (D50). Worth doing: unit tests over `daypart.ts` alone
+cannot see a seam bug. In-browser: first-run seeding
 produced 4 dayparts + 1 user + 5 queued outbox rows, idempotent across reloads, no
 console errors; nav is 44px targets, `sticky` top from `md`, `fixed` bottom below
 it with 80px content clearance.
