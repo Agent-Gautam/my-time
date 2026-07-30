@@ -11,7 +11,7 @@ import {
 } from "@/sync";
 import type { IsoDateTime } from "@/core/types";
 
-export type SyncStatus = "synced" | "syncing" | "offline" | "pending";
+export type SyncStatus = "synced" | "syncing" | "offline" | "pending" | "blocked";
 
 interface SyncStatusData {
   status: SyncStatus;
@@ -86,13 +86,19 @@ export function useSyncStatus(): SyncStatusData {
     startSync();
   }, []);
 
+  // `blocked` sits just under `offline`: while offline, "your writes are queuing
+  // normally" is still the more useful thing to say, and a rejected key is not
+  // actionable until there is a network anyway. Above `pending`, though — a wedged
+  // outbox must never render as ordinary queuing (D59).
   const status: SyncStatus = !isOnline
     ? "offline"
-    : engine.syncing
-      ? "syncing"
-      : pendingCount > 0
-        ? "pending"
-        : "synced";
+    : engine.blocked
+      ? "blocked"
+      : engine.syncing
+        ? "syncing"
+        : pendingCount > 0
+          ? "pending"
+          : "synced";
 
   return { status, pendingCount, isOnline, lastPullAt: engine.lastPullAt };
 }

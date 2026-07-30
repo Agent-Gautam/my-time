@@ -51,6 +51,7 @@ import {
 } from "@/db/server/schema";
 import { LOCAL_USER_ID } from "@/db/ids";
 import { planWeekLineage, shouldApplyWeek } from "@/sync/merge";
+import { SYNC_KEY_HEADER } from "@/sync/transport";
 import {
   PULLED_TABLES,
   emptyPulledRows,
@@ -860,7 +861,27 @@ async function pull(
 // Handler
 // ---------------------------------------------------------------------------
 
+/**
+ * A shared key, not authentication (D59) — the client half is in `sync/transport.ts`
+ * and explains why a browser cannot hold a real secret.
+ *
+ * **Fails open when `SYNC_KEY` is unset**, deliberately. That is exactly the behaviour
+ * this endpoint already had, so an unset variable is not a regression; whereas failing
+ * closed would brick sync on any deployment that missed the variable, and a wedged
+ * outbox is the harder failure to notice. The variable being present is what turns the
+ * check on.
+ */
+function keyAccepted(request: Request): boolean {
+  const expected = process.env.SYNC_KEY;
+  if (!expected) return true;
+  return request.headers.get(SYNC_KEY_HEADER) === expected;
+}
+
 export async function POST(request: Request) {
+  if (!keyAccepted(request)) {
+    return NextResponse.json({ error: "Rejected." }, { status: 401 });
+  }
+
   let body: unknown;
   try {
     body = await request.json();
@@ -894,9 +915,16 @@ export async function POST(request: Request) {
       await applyChange(change, userId);
       applied.push(change.seq);
     } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      // The full text is a Drizzle error carrying the failing SQL — column list and
+      // all. Nothing on the client branches on `reason` (only `seq` is read, in
+      // `push.ts`), so the wire copy is trimmed to the table and operation and the
+      // detail goes to the server log, where debugging a wedged outbox actually
+      // happens.
+      console.error(`sync: change ${change.seq} (${change.table}) failed —`, detail);
       rejected.push({
         seq: change.seq,
-        reason: (error instanceof Error ? error.message : String(error)).slice(0, 300),
+        reason: `${change.op} on ${change.table} was refused`,
       });
     }
   }

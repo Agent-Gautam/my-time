@@ -354,3 +354,96 @@ describe("push and pull in one round trip", () => {
     expect(await localDb.planSlots.count()).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// A rejected sync key (D59)
+// ---------------------------------------------------------------------------
+//
+// The failure this guards against is not the 401 itself — it is what the engine used to
+// do with one. Every `!response.ok` becomes a `SyncTransportError`, and the catch
+// treated them all as "worth retrying", so a wrong or rotated key meant an outbox that
+// retried forever, never drained, and rendered as an ordinary `pending` the user had no
+// way to interpret.
+describe("when the server rejects the sync key", () => {
+  // Note on what is checkable here: `scheduleRetry` early-returns when `window` is
+  // undefined, and these tests run in node — so "no retry fired" is true in this
+  // environment either way and a timer-based assertion would prove nothing. `blocked`
+  // is the branch that decides it (`if (!blocked) scheduleRetry(...)`), so asserting
+  // the flag is asserting the decision. The consequences that *are* observable — the
+  // outbox surviving, and the flag clearing on a later success — are checked directly.
+
+  /** Counts calls, so a repeated attempt would be visible rather than inferred. */
+  function scripted(status: () => number | null) {
+    let calls = 0;
+    const accepting = acceptAll().transport;
+    const transport: SyncTransport = async (request) => {
+      calls += 1;
+      const code = status();
+      if (code === null) return accepting(request);
+      throw new SyncTransportError(`sync failed: ${code}`, code);
+    };
+    return { transport, calls: () => calls };
+  }
+
+  it("marks the device blocked rather than backing off", async () => {
+    const { transport, calls } = scripted(() => 401);
+    install(transport);
+    await queue(1);
+
+    await syncNow();
+
+    expect(getSyncEngineSnapshot().blocked).toBe(true);
+    expect(getSyncEngineSnapshot().syncing).toBe(false);
+    expect(calls()).toBe(1);
+  });
+
+  it("treats 403 the same as 401", async () => {
+    const { transport } = scripted(() => 403);
+    install(transport);
+    await queue(1);
+
+    await syncNow();
+
+    expect(getSyncEngineSnapshot().blocked).toBe(true);
+  });
+
+  it("leaves an ordinary failure on the retry path, which a 500 is", async () => {
+    const { transport } = scripted(() => 500);
+    install(transport);
+    await queue(1);
+
+    await syncNow();
+
+    expect(getSyncEngineSnapshot().blocked).toBe(false);
+    expect(getSyncEngineSnapshot().lastError).not.toBeNull();
+  });
+
+  it("keeps the outbox intact — nothing is lost, only postponed", async () => {
+    const { transport } = scripted(() => 401);
+    install(transport);
+    await queue(2);
+
+    await syncNow();
+
+    expect(await getOutboxDepth()).toBe(2);
+  });
+
+  it("clears once the key is accepted again, without reconfiguring", async () => {
+    // Flipped on the *same* transport deliberately. Re-`install`ing would call
+    // `configureSync`, which resets engine state — so the assertion would pass even if
+    // a successful run never cleared `blocked`.
+    let code: number | null = 401;
+    const { transport } = scripted(() => code);
+    install(transport);
+    await queue(1);
+
+    await syncNow();
+    expect(getSyncEngineSnapshot().blocked).toBe(true);
+
+    code = null;
+    await syncNow();
+
+    expect(getSyncEngineSnapshot().blocked).toBe(false);
+    expect(await getOutboxDepth()).toBe(0);
+  });
+});

@@ -32,7 +32,7 @@ import { createMemoStore, emptyMemo, type SyncMemoStore } from "./memo";
 import { applyPull } from "./pull";
 import { collectPush, PUSH_BATCH_SIZE, recordPushFailure, settlePush } from "./push";
 import type { SyncCursors, SyncRequest } from "./protocol";
-import { httpTransport, type SyncTransport } from "./transport";
+import { httpTransport, SyncTransportError, type SyncTransport } from "./transport";
 
 /** Guards against a bug turning one sync into an unbounded request loop. */
 const MAX_ROUNDS = 20;
@@ -54,19 +54,33 @@ export interface SyncEngineState {
   lastPullAt: IsoDateTime | null;
   /** Last failure, for diagnostics only. Never surfaced as something to act on (D46). */
   lastError: string | null;
+  /**
+   * The server rejected this client's sync key (D59). Distinct from `lastError`
+   * because it is the one state that does not clear itself: retrying is pointless, so
+   * the indicator has to be able to say "this device is not syncing" rather than
+   * showing a `pending` that will never resolve. Still not an action (D46) — there is
+   * no button, because the fix is a deployment variable, not something the user does.
+   */
+  blocked: boolean;
 }
 
 const listeners = new Set<() => void>();
 
 // A frozen snapshot object, replaced rather than mutated: `useSyncExternalStore`
 // compares by reference and would miss an in-place edit.
-let state: SyncEngineState = { syncing: false, lastPullAt: null, lastError: null };
+let state: SyncEngineState = {
+  syncing: false,
+  lastPullAt: null,
+  lastError: null,
+  blocked: false,
+};
 
 /** Stable across renders during SSR, where there is no engine and never a flush. */
 const SERVER_STATE: SyncEngineState = {
   syncing: false,
   lastPullAt: null,
   lastError: null,
+  blocked: false,
 };
 
 function setState(patch: Partial<SyncEngineState>): void {
@@ -74,7 +88,8 @@ function setState(patch: Partial<SyncEngineState>): void {
   if (
     next.syncing === state.syncing &&
     next.lastPullAt === state.lastPullAt &&
-    next.lastError === state.lastError
+    next.lastError === state.lastError &&
+    next.blocked === state.blocked
   ) {
     return;
   }
@@ -132,7 +147,7 @@ export function configureSync(overrides: SyncEngineOptions = {}): void {
     batchSize: PUSH_BATCH_SIZE,
   };
   options = { ...base, ...overrides };
-  state = { syncing: false, lastPullAt: null, lastError: null };
+  state = { syncing: false, lastPullAt: null, lastError: null, blocked: false };
   failures = 0;
   inFlight = null;
   rerunRequested = false;
@@ -238,14 +253,27 @@ async function runSync(): Promise<SyncOutcome> {
     }
 
     failures = 0;
-    setState({ syncing: false, lastPullAt: memo.read().lastPullAt, lastError: null });
+    setState({
+      syncing: false,
+      lastPullAt: memo.read().lastPullAt,
+      lastError: null,
+      blocked: false,
+    });
     return outcome;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     outcome.error = message;
     failures += 1;
-    setState({ syncing: false, lastError: message });
-    scheduleRetry(backoffMs(failures));
+
+    // A rejected key is the one failure retrying cannot fix, so it does not get the
+    // backoff path: the loop stops and the state says so. Left on the retry path it
+    // would flush every few minutes forever, never drain the outbox, and show nothing
+    // but a permanent `pending` — a silent wedge, and worse than what the key prevents.
+    // `onOnline`/`onVisibilityChange` still call `syncNow` directly, so a corrected
+    // deployment recovers on the next foreground without a reinstall.
+    const blocked = error instanceof SyncTransportError && error.isFatal;
+    setState({ syncing: false, lastError: message, blocked });
+    if (!blocked) scheduleRetry(backoffMs(failures));
     return outcome;
   }
 }

@@ -877,6 +877,50 @@ Coefficients deliberately unfixed; tuned once the app is in real use.
 
 ---
 
+### D59 — `/api/sync` gets a shared key, and the key is honestly labelled "not auth"
+
+Wave 3 put every row the app holds behind one unauthenticated `POST /api/sync`, on a
+public URL. That is a change in kind, not degree: `/api/push/subscribe` only ever let a
+stranger add a push token, while sync exposes the whole dataset for **read and write**.
+Auth being deferred (context, top of this file) was decided when no endpoint could do
+that.
+
+Full auth is still deferred. What ships is a shared key in an `x-sync-key` header,
+compared against `SYNC_KEY` on the server.
+
+**It is not authentication and the code says so in those words.** The client is a
+browser, so the value must reach it via `NEXT_PUBLIC_SYNC_KEY`, which Next inlines into
+the JS bundle — and Serwist then precaches that bundle. Anyone who opens devtools can
+read it. It raises the cost from "the URL is the entire secret" to "you have to look",
+which stops crawlers and drive-by requests and stops nothing else. Recording it this
+way matters more than the mechanism: a security control with an inflated label is worse
+than none, because the next person trusts it.
+
+Two consequences that are deliberate, not oversights:
+
+- **It fails open.** With `SYNC_KEY` unset the check is skipped entirely. That is
+  precisely today's behaviour, so an unset variable is not a regression — whereas
+  failing closed would brick sync on any deployment that missed the variable, and a
+  wedged outbox is far harder to notice than an open endpoint.
+- **A 401 stops the retry loop.** Every other transport failure backs off and retries,
+  because the outbox must survive. A rejected key is the one failure retrying cannot
+  fix — a rotated key with a client still serving a precached bundle would flush
+  forever, never drain, and render as an ordinary `pending`. It sets `blocked`, the
+  indicator says so plainly, and it clears on the next accepted run. Still not an
+  action (D46): the fix is a deployment variable, not something the user can do.
+
+Rejection reasons are also trimmed on the wire — they were returning the failing SQL,
+column list included, to an unauthenticated caller. Nothing on the client reads
+`reason` (only `seq`), so the detail moved to the server log.
+
+**The real gate, when it is wanted:** a passphrase entered once per device, held in
+`localStorage`, sent as the same header and compared to a non-public variable. That
+keeps strangers out for real, because nothing secret ships in the bundle. It costs a
+gate screen and a recovery story for a forgotten passphrase, which is why it is written
+down here rather than built. See **O14**.
+
+---
+
 ## Open questions
 
 - ~~O1 — Planning horizon~~ → resolved by **D16**.
@@ -894,3 +938,7 @@ Coefficients deliberately unfixed; tuned once the app is in real use.
 - ~~O10 — Scope cutting~~ → resolved by **D27**.
 - ~~O11 — Stage deadline hardness~~ → resolved by **D30** (advisory).
 - ~~O12 — v1 scope~~ → resolved: Option B (D28). Detailed in `Phases.md`.
+- **O14 — Real access control for `/api/sync`.** D59 ships a bundle-readable key that
+  deters scanners and nothing else. The dataset is one URL away from anyone who looks.
+  Open until either a device passphrase or real auth lands; revisit before the app
+  holds anything the author would mind a stranger reading or overwriting.

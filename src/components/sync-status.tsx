@@ -40,9 +40,9 @@ function StatusIcon({ status }: { status: SyncStatus }) {
         </svg>
       );
 
-    // Not yet reachable — Wave 3 wires it. Deliberately still: `design.md` §6.1
-    // forbids anything infinite, and a spinner on a status that must never pull
-    // attention (D46) is exactly what that rule is about.
+    // Wired by Wave 3. Deliberately still: `design.md` §6.1 forbids anything infinite,
+    // and a spinner on a status that must never pull attention (D46) is exactly what
+    // that rule is about.
     case "syncing":
       return (
         <svg
@@ -82,6 +82,23 @@ function StatusIcon({ status }: { status: SyncStatus }) {
           <circle cx="12" cy="12" r="8" />
         </svg>
       );
+
+    // This device's sync key was rejected (D59). `text-neutral`, not a warning colour —
+    // the data is safe in Dexie and nothing the user did caused it, so it reports like
+    // "offline" rather than like a problem to fix (D15).
+    case "blocked":
+      return (
+        <svg
+          className={`${iconProps} text-neutral`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth="2"
+        >
+          <circle cx="12" cy="12" r="8" />
+          <path d="M6.5 6.5l11 11" />
+        </svg>
+      );
   }
 }
 
@@ -95,5 +112,7 @@ function getAriaLabel(status: SyncStatus, pendingCount: number): string {
       return "Offline. Changes will sync when connected.";
     case "pending":
       return `${pendingCount} change${pendingCount === 1 ? "" : "s"} pending sync`;
+    case "blocked":
+      return "Not syncing on this device. Your changes are saved here.";
   }
 }
