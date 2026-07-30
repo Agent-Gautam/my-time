@@ -76,7 +76,59 @@ rules. Track A (the scheduler) is the one to give the most capable session.
   different one.
 
 ### Track A — Scheduler (`core/`)
-*not started*
+**Done.** All six modules implemented in `src/core/`, test-first, on branch `track/core`
+(worktree `../my-time-core`): `constants.ts`, `score.ts`, `pace.ts`, `explain.ts`,
+`reconcile.ts`, `layout.ts` — plus two small internal helpers, `dateUtils.ts` (all date
+arithmetic takes explicit `IsoDate`/`IsoDateTime` input, never `new Date()`/`Date.now()`,
+per D34) and shared cadence-window helpers exported from `score.ts`.
+
+55 tests in `tests/core/`, one file per module, covering every rule in `Architecture.md`
+§4.2 by name (determinism, idempotence/recompute-never-patch, past-immutability, churn
+minimisation, scarcity-first D9, pack-not-sort knapsack D27, no-partial-sessions, fixed
+time-box). `npm run lint` and `npm run test` both pass clean (0 errors, 0 warnings);
+`tsc --noEmit` clean.
+
+**Signature note — not a `core/types.ts` gap, but flagging per `Phases.md`'s "A
+discovers, B follows" rule anyway:** `Architecture.md` §4.1's `layoutWeek` snippet lists
+only `goals`/`dayparts`/`history`/`existing`/`weekStart`. Every field it needs already
+exists in the frozen `types.ts` — nothing there needed to change — but the illustrative
+signature itself was missing three inputs, all added:
+- `stages: Stage[]` — `Goal` has no embedded stages array (stages hang off `goalId`,
+  §5.3 — correctly), so layout needs the actual scheduling units passed separately.
+- `checkpoints: Checkpoint[]` — the deadline-pressure signal (`score.ts`) needs scope
+  progress to compare against a target date.
+- `now: IsoDateTime` — D34 requires the clock be a parameter; layout needs "today" to
+  know which dates in the week are past (rule 3) and can't read it internally.
+
+Same reasoning applies to `pace.ts`'s `scopeStatus`, which also takes a `history:
+SessionLog[]` beyond the `(stage, checkpoints, now)` sketch — D17's "sessions per
+chapter" measurement needs the session count, which checkpoints alone don't carry.
+
+**Design decisions worth knowing before touching this code:**
+- `reconcile.ts`'s knapsack has no separate "value" field to work with (`PlanSlot` only
+  carries `minutes`) — it treats the input `slots` array's *order* as priority (index 0
+  = most important) and derives knapsack value from rank position. Callers (the future
+  check-in feature) must pass slots pre-sorted by priority, most important first — the
+  order `layout.ts` itself produces already satisfies this for a freshly-generated plan,
+  but a check-in re-score at call time may want to re-sort first since staleness/debt
+  shift day to day.
+- `layout.ts`'s daypart choice among a stage's *eligible* dayparts (when more than one
+  is open) load-balances by least-sessions-placed-today, tie-broken by
+  `daypart.sortOrder` — there's no explicit per-daypart session cap in the schema, so
+  this is what actually keeps D9 scarcity meaningful (it's what stops a flexible stage
+  from crowding out a scarce one's only option).
+- `Daypart.activeCap` (D7/D11 — max *active* goals per daypart) is **not enforced by
+  layout.ts**. Treated as a goal-activation-time admission constraint owned by the UI
+  (D31: promotion is manual), not the scheduler — `layoutWeek`'s `goals`/`stages` inputs
+  are assumed already filtered to what's legitimately active.
+- Hybrid cadence (`"4×/week, one must be Sunday"`) needed a capacity-reservation trick:
+  without it, frequency-style placement earlier in the week can spend the stage's whole
+  weekly count before its mandatory weekday ever arrives. `reservedForMandatory()` in
+  `layout.ts` holds back exactly enough remaining slots once the mandatory day(s) still
+  ahead would otherwise be starved.
+
+Not yet wired to anything — Track B's Dexie/Drizzle layer and the Wave 2 check-in
+feature are what will actually call these functions.
 
 ### Track B — Data layer (`db/`, `drizzle/`)
 *not started*
