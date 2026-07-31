@@ -1368,3 +1368,82 @@ the real Supabase:
   append-only facts and removing them would violate D32.
 - **`npm run test` now touches the network** when `.env.local` is present, via
   `process.loadEnvFile`. Node 22 built-in, no dependency added (D50).
+
+---
+
+## Session — 2026-07-31 · W1: a device that pulled goals kept its old plan (D62)
+
+`relayoutWeek` had exactly four callers — `goal-form.tsx` (×2), `daypart-settings.tsx`,
+`checkin-view.tsx` — and **nothing in `src/sync/`**. Every one of those is a *local*
+edit, so a device that received goals, stages or dayparts **by pull** kept whatever plan
+it already had. The goals showed up in the list; Today stayed as it was. Nothing errored
+and nothing said so.
+
+### The decision (D62) — injected, not imported
+
+`sync/` sits below `features/`, so it cannot reach `relayoutWeek`. Three options were on
+the table; two are recorded as rejected in `DECISIONS.md` because they are wrong in ways
+that are not obvious:
+
+- **`sync/` imports the planner** — inverts the layering, and no ESLint guard catches it.
+- **A UI effect on `lastPullAt`** — *cannot work*. `memo.write({ cursors, lastPullAt })`
+  runs on every round of every run, so `lastPullAt` moves even when zero rows arrived. An
+  effect on it re-plans, which enqueues, which bumps the outbox high-water mark, which
+  the write-trigger watches → sync → new `lastPullAt` → re-plan. That is the D47 loop
+  rebuilt from different parts.
+
+What shipped: the UI hands `relayoutWeek` down as an argument to `startSync`; the engine
+knows only the shape (`RelayoutAfterPull`). `use-sync-status.ts` is the composition root —
+it already starts the engine and is on the UI side of the seam.
+
+Registration is on `startSync`, **not `configureSync`**: the latter resets `state` and
+nulls `inFlight`, so a StrictMode-double-invoked effect would clear a live run's
+coalescing guard and re-push the head of the outbox.
+
+The trigger is a new `ApplyOutcome.inputsChanged` — true only when a daypart, goal or
+stage row was *written*, not merely received. `planWeeks` are excluded because they are
+layout's output, so nothing the re-plan itself writes can re-trigger it. Held in a
+module-level flag that clears only when the re-plan returns, so a throw is retried on the
+next run rather than lost.
+
+### Verified with a control, which is the part that mattered
+
+`lint` clean, **186 tests** (was 177), production build OK. Then two Chromium contexts,
+separate profiles, `:3000`/`:3001` — different origins so genuinely different IndexedDB —
+against the one Supabase. **`origin/main` was built and run the same way on `:3011`/`:3012`
+as a control.**
+
+The scenario is the reported shape, not the easy one. A fresh device that pulls A's plan
+week gets a correct plan *without* any fix, so that proves nothing. Instead: B goes
+offline, edits a daypart (a local re-plan, stamping B's week later than A's), and only
+then pulls. A's week loses the LWW race, so the plan cannot arrive that way.
+
+| | control (`origin/main`) | with D62 |
+|---|---|---|
+| B received the goal | yes | yes |
+| B's slots for its stage | **0** | **3** |
+| B's plan week across the pull | v14 → v14, unchanged | v11 → **v12**, B's own clock |
+| `/api/sync` requests in the 20s after | 0 | 0 |
+
+The week going to version+1 with B's own timestamp is the discriminator: B's UI did
+nothing between the daypart save and the pull, and `relayoutWeek` has no other trigger —
+so that re-plan came from the engine. Both runs quiescent, so the loop trap was avoided.
+
+### Left behind, worth knowing
+
+- **Session logs deliberately do not trigger a re-plan** — reasoning in D62. They *are* a
+  layout input (`checkin-view.tsx` re-plans after every local `logSession`), and including
+  them would be loop-safe, but layout depends on `now`, so two devices re-planning off
+  each other's logs trade slightly different weeks on every check-in. **The cost: a device
+  shows a session another device already completed until its next local re-plan.** Fix is
+  one more counter in `applyPull` if it turns out to be annoying in use.
+- **D60 and D61 were already taken** by `fix/daypart-capacity` and `feature/dart-icon`,
+  neither merged to `main`. This took D62. Check every live branch before claiming a
+  number, not just `main`.
+- **Four junk goals named `Cross-device …` are now on the server**, created by the
+  verification runs (two by the control). They are `active` and will occupy plan slots.
+  Drop them through the UI — nothing here hard-deletes (D48).
+- Two servers off one `.next` build (`next start -p 3000` / `-p 3001`) is the cheapest
+  two-device rig there is: separate origins, separate IndexedDB, one server. Worth reusing.
+  Note other worktrees hold ports in the 3000–3003 range; check before assuming a port is
+  yours.
