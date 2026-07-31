@@ -1282,3 +1282,89 @@ other than the blocked icon (a slashed circle) means the keys match.**
 - Supabase database password rotation (exposed in Vercel log output on 2026-07-29).
 - D36 sign-off: notification actually arriving on the Android phone.
 - O14: real access control for `/api/sync`.
+
+---
+
+## Session — 2026-07-31 · sync was silently broken in production; two fixes
+
+Reported as *"I entered 5 goals on my laptop and nothing appears on my phone"*, plus a
+status indicator that never settled. Both were real, and they were two different bugs.
+
+### 1. The LWW guard could never execute (the reason nothing synced)
+
+`route.ts`'s `newerThanStored` built the `ON CONFLICT ... WHERE` clause as
+``sql`${column} < ${date}` ``. A raw `sql` template binds its value **without reference to
+the column**, so the JS `Date` never reached the `timestamptz` encoder and postgres.js
+refused the whole statement:
+
+```
+The "string" argument must be of type string or an instance of Buffer or
+ArrayBuffer. Received an instance of Date
+```
+
+Every mutable table upserts through that one helper, so **every `users` / `dayparts` /
+`goals` / `stages` / `pushSubscriptions` push had been rejected on every device since the
+first sync.** `planWeeks` skips the guard and the append-only tables use
+`onConflictDoNothing`, so those synced fine — which is why the database held a plan week
+and zero goals, and why it read as a data problem rather than one broken function.
+
+Fixed with `lt(column, date)`, which binds against the column. The four raw templates in
+`applyDelete` had the same defect and are fixed too.
+
+**Why nothing caught it, and what changed.** `tests/sync/**` runs against a scripted
+transport; the SQL *string* is correct, and rendering it through `drizzle.mock` — which a
+previous session did — shows nothing wrong. The failure is in **encoding a parameter**,
+which only a real driver does. New `tests/sync/lww-guard.pg.test.ts` runs the real
+statements against Postgres inside always-rolled-back transactions, and was **verified to
+fail on all four cases against the old helper**. It is skipped when `DATABASE_URL` is
+absent, so it protects a local `npm run test` and **not** CI — a real limitation, stated
+in the file rather than papered over. A throwaway Postgres in CI is the proper fix and is
+a D50 decision nobody has made.
+
+### 2. The engine re-triggered itself on a refused row
+
+The write-trigger watched outbox **depth** through `liveQuery`. Dexie re-fires `liveQuery`
+on any mutation to an observed table, not only when the observed value changes — and
+`settlePush` bumps `attempts` on every rejected row. So: sync → reject → bump → sync, one
+request per 1.5s debounce, forever. Proven with `fake-indexeddb`: three attempts-bumps
+with the count unchanged produced four emissions.
+
+Its only symptom is an indicator that never settles, which reads as *"working on it"*
+rather than as a fault. **It does not go away with bug 1** — a permanently rejected row
+still re-creates it, which this file already warned was possible.
+
+Now watches `getOutboxHighWaterMark()`. `seq` is `++seq` and Dexie never reuses a value,
+so it moves only on a genuine enqueue and can be raised by neither an update nor an ack.
+
+### Verified live, not merely built
+
+`lint` clean, **177 tests** (was 170), production build OK. Then, against a dev server on
+the real Supabase:
+
+- Loading the app **once** drained a queue stuck since 30 July — 4 dayparts, 1 goal, 1
+  stage, 1 session log, 1 checkpoint all landed, and the indicator reached the checkmark.
+- **Wiped the client's IndexedDB and its `localStorage` cursors, reloaded, and the goal
+  and all four dayparts came back down from the server.** That is a real second-device
+  pull, and it is the first time cross-device sync has actually been observed working.
+- Created a goal through the UI → on the server within seconds.
+- Dropped it through the UI → the *edit* propagated, which is the first time the
+  `setWhere` conflict path has run against real Postgres under a genuine conflict.
+- Idle for 20s with the outbox empty: **zero** requests to `/api/sync` (before the fix
+  this window would have held roughly a dozen).
+
+### Things this turned up, worth keeping
+
+- **The empty `week-2026-07-27` hazard resolved itself.** It held version 4 with zero
+  slots because layout had no goals to schedule. Once goals synced, a relayout produced 5
+  slots and won LWW. No manual deletion was needed — but the risk was real, and this file's
+  own warning about an empty week beating a real one is what flagged it.
+- **The user's laptop data is in Firefox, not Chrome.** `push_subscriptions` carries the
+  device label, which is how that was established.
+- **Bug 1's fix is server-side.** Existing clients recover on their next sync without a new
+  bundle. Bug 2's fix is client-side and needs the deploy to reach each device.
+- A `Sync verification goal` exists on the server in state `dropped` — created to prove
+  push, then dropped through the app's own path (D48, never a hard delete). It is
+  invisible in the UI. Two verification `check_ins` from the same session remain; they are
+  append-only facts and removing them would violate D32.
+- **`npm run test` now touches the network** when `.env.local` is present, via
+  `process.loadEnvFile`. Node 22 built-in, no dependency added (D50).
