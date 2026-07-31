@@ -18,6 +18,7 @@ import { useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 
 import { Button } from "@/components/ui/button";
+import { DartLoader } from "@/components/dart-mark";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -66,6 +67,13 @@ export function CheckinView() {
   const [initialNow] = useState(() => localNow());
   const dayparts = useLiveQuery(() => getDayparts(), [], []);
   const activeGoals = useLiveQuery(() => getGoalsWithStage({ states: ["active"] }), [], []);
+
+  // `dayparts`/`activeGoals` default to `[]` while loading, which is
+  // indistinguishable from "loaded, genuinely empty" — needed so the rest of
+  // this component can treat them as plain arrays. This is a dedicated signal
+  // for the one thing that actually needs to tell those states apart: the
+  // first-paint loading indicator below.
+  const dataReady = useLiveQuery(() => getDayparts().then(() => true), [], false);
 
   // Detected daypart is a derived value, not stored state — an override only
   // exists once the user actually corrects it (PRD §6.5: "confirms or corrects").
@@ -204,6 +212,14 @@ export function CheckinView() {
   };
 
   const daypartOptions = dayparts.map((dp) => ({ id: dp.id, label: capitalize(dp.name) }));
+
+  if (!dataReady) {
+    return (
+      <div className="flex flex-1 items-center justify-center py-16">
+        <DartLoader className="size-16" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6 py-6">

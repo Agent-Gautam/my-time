@@ -174,7 +174,12 @@ most of what follows.
 - **No `backdrop-filter`, no large blurs.** The single biggest source of jank on budget
   Android GPUs. (The predecessor's soft blurred card is precisely this trap.)
 - **Respect `prefers-reduced-motion`** — reduce to opacity, or remove entirely.
-- **Nothing infinite.** No looping shimmer, no pulsing dots, no parallax.
+- **Infinite is allowed only when it's CSS-declarative and compositor-only** — a
+  `@keyframes` animation on `opacity`/`transform` alone, with no JS driving it (D61).
+  It costs nothing on a budget phone's main thread, which is what "nothing infinite"
+  was actually protecting against. **Looping shimmer, pulsing dots, and parallax stay
+  banned** — not because they loop, but because they're built to pull attention (§1),
+  which is a separate reason and the one doing the real work here.
 - **CSS transitions by default.** A motion library only if something genuinely needs
   orchestration, and it needs asking first (D50).
 - **A handful of concurrent animations, not a cascade.** Stagger lists at most 3 items.
@@ -189,6 +194,11 @@ most of what follows.
 
 Nothing exceeds 300ms. Slow animation reads as a slow app.
 
+This table is about **perceived latency** — a transition that takes longer than 300ms
+reads as the app being slow to respond. A looping animation (D61) has no such moment; it
+isn't answering an action, so the cap doesn't apply to it. Stated here so the loading
+loop isn't read as a silent exception.
+
 ### 6.3 Where motion earns its place
 
 - **The check-off.** The most repeated interaction in the app — worth a small, precise
@@ -197,6 +207,8 @@ Nothing exceeds 300ms. Slow animation reads as a slow app.
 - **List settle after reconciliation.** Should be rare anyway, since layout minimises
   churn (D32).
 - **Theme change** — brief cross-fade, so an automatic daypart switch isn't a jolt.
+- **The loading mark.** The one infinite loop in the app (D61) — a dart landing on a
+  board, resolving into the app's own icon on its resting frame. Not a spinner.
 
 Everything else: no animation is the correct amount.
 

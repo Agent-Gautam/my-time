@@ -124,3 +124,70 @@
     scroll-behavior: auto !important;
   }
 }
+
+/*
+ * D61 — the dart-loader loop (components/dart-mark.tsx). One 2600ms cycle:
+ * bull, middle band, outer band, then the dart from the top right, all fading
+ * out together just before it repeats. Every part shares one duration and
+ * carries its own stagger in keyframe percentages, so nothing can drift out
+ * of phase however long it runs. `opacity` and `transform` only (§6.1).
+ */
+.dart-loader__bull {
+  animation: dart-ring-bull 2600ms linear infinite;
+}
+.dart-loader__mid {
+  animation: dart-ring-mid 2600ms linear infinite;
+}
+.dart-loader__outer {
+  animation: dart-ring-outer 2600ms linear infinite;
+}
+.dart-loader__dart {
+  animation: dart-throw 2600ms linear infinite;
+  transform-box: view-box;
+  transform-origin: 50% 50%;
+}
+
+@keyframes dart-ring-bull {
+  0% { opacity: 0; }
+  8% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes dart-ring-mid {
+  0%, 6% { opacity: 0; }
+  16% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes dart-ring-outer {
+  0%, 13% { opacity: 0; }
+  23% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes dart-throw {
+  0%, 24% { opacity: 0; transform: translate(150px, -150px); }
+  30% { opacity: 1; }
+  52% { opacity: 1; transform: translate(0, 0); }
+  88% { opacity: 1; transform: translate(0, 0); }
+  100% { opacity: 0; transform: translate(0, 0); }
+}
+
+/* Overrides the generic collapse above: a 0.01ms iteration still runs once,
+   which for this loop's keyframes would land on the fully-faded 100% frame.
+   Reduced motion should show the assembled mark at rest instead (§6.1: "reduce
+   to opacity, or remove entirely"). More specific than the `*` rule above, so
+   it wins regardless of source order. */
+@media (prefers-reduced-motion: reduce) {
+  .dart-loader__bull,
+  .dart-loader__mid,
+  .dart-loader__outer,
+  .dart-loader__dart {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}

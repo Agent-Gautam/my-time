@@ -963,6 +963,48 @@ change than this one and wants its own decision.
 
 ---
 
+### D61 — The app icon and loading mark are a dart and dartboard, and infinite CSS loops are allowed
+
+The mark comes from `task-shot 2.0`'s `src/components/Loading.tsx` — three rings
+blinking inner-to-outer, then a dart thrown in from the top right. It was only ever a
+loading state there; the predecessor shipped `vite.svg` as its actual icon. Promoted
+here to both: the loop is the loading state, and its landed frame is the app icon.
+
+The palette lineage is direct, not a fresh pairing applied to an old idea.
+`task-shot`'s `index.css` set `--secondary: 47 69 93` (`#2F455D`, today's `ink`) and
+dark `--accent: 215 148 42` (`#D7942A`, today's dark `accent-fill`). §2's "carried
+forward from `task-shot`" already meant this file.
+
+**One thing changes on the way over.** A dartboard is conventionally red and green;
+§2.3 bans red outright. The board is `accent-fill`, the dart is `ink` — two tones, no
+third colour axis, and `ink`'s existing light/dark values already happen to be the
+right contrast colour against the board on both themes, so no new token was needed.
+
+**This required amending §6.1.** "Nothing infinite" was written against a real cost: a
+JS-driven loop (the original used `motion/react`) keeps the main thread busy and drains
+battery on a budget phone indefinitely. A `@keyframes` animation on `opacity`/
+`transform` only runs on the compositor and costs close to nothing while idle, so that
+reasoning doesn't reach it. §6.1 now permits infinite **only** under that condition;
+shimmer, pulsing dots, and parallax stay banned, but on the grounds that they're built
+to pull attention (§1) — the argument that was actually doing the work, restated so it
+survives the exception. §6.2's duration cap is scoped to transitions with perceived
+latency, which a loop doesn't have.
+
+`motion/react` is **not** ported — nothing here needs a library the project doesn't
+already have (D50). The whole loop is CSS: four elements, one shared 2600ms duration,
+each carrying its own stagger in keyframe percentages so nothing can drift relative to
+another however long it runs. `prefers-reduced-motion` drops straight to the assembled,
+static mark rather than freezing on the loop's mid-fade frame — a dedicated override
+in `globals.css` takes precedence over the project's existing blanket
+animation-collapse rule, which would otherwise land on `opacity: 0`.
+
+The four manifest icons and `favicon.ico` are generated PNGs (flat two-tone geometry, no
+rasteriser dependency added) sharing the same coordinates as the `DartMark` component in
+`src/components/dart-mark.tsx`, so the static mark, the loop's resting frame, and the
+icon files are provably the same drawing.
+
+---
+
 ## Open questions
 
 - ~~O1 — Planning horizon~~ → resolved by **D16**.
