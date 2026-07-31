@@ -24,7 +24,7 @@
 import { liveQuery, type Subscription } from "dexie";
 
 import { addDays, dateOnly } from "@/core/dateUtils";
-import { getOutboxDepth, LOCAL_HISTORY_WINDOW_DAYS } from "@/db/local/queries";
+import { getOutboxHighWaterMark, LOCAL_HISTORY_WINDOW_DAYS } from "@/db/local/queries";
 import { localNow } from "@/lib/daypart";
 import type { IsoDateTime } from "@/core/types";
 
@@ -300,6 +300,8 @@ let started = false;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let writeTimer: ReturnType<typeof setTimeout> | null = null;
 let outboxSubscription: Subscription | null = null;
+/** Highest outbox `seq` the write-trigger has already reacted to. */
+let lastSeenSeq = 0;
 
 function scheduleRetry(delay: number): void {
   if (typeof window === "undefined") return;
@@ -336,13 +338,22 @@ export function startSync(): void {
   window.addEventListener("online", onOnline);
   document.addEventListener("visibilitychange", onVisibilityChange);
 
-  // After a write. Driven by the outbox's own depth rather than a timer: a
-  // `setInterval` waking on every route would burn a budget Android phone's battery
-  // for a value that only changes when something is written (D47). Debounced, so
-  // saving a goal and its stage is one push, not two.
-  outboxSubscription = liveQuery(() => getOutboxDepth()).subscribe({
-    next: (depth) => {
-      if (depth === 0) return;
+  // After a write. Driven by the outbox itself rather than a timer: a `setInterval`
+  // waking on every route would burn a budget Android phone's battery for a value that
+  // only changes when something is written (D47). Debounced, so saving a goal and its
+  // stage is one push, not two.
+  //
+  // **Watches the high-water mark, not the depth.** `liveQuery` re-fires on any mutation
+  // to the table, not only when its result changes, so a depth-based trigger also fired
+  // when `settlePush` bumped `attempts` on a rejected row — sync, reject, bump, sync,
+  // for as long as the row stayed refused. That is a request every 1.5s forever, and its
+  // only visible symptom is a status indicator that never settles, which reads as
+  // "working on it" rather than as a fault. `seq` moves only on a genuine enqueue, so
+  // the engine can no longer trigger itself. See `getOutboxHighWaterMark`.
+  outboxSubscription = liveQuery(() => getOutboxHighWaterMark()).subscribe({
+    next: (highWaterMark) => {
+      if (highWaterMark <= lastSeenSeq) return;
+      lastSeenSeq = highWaterMark;
       if (writeTimer) clearTimeout(writeTimer);
       writeTimer = setTimeout(() => {
         writeTimer = null;
@@ -365,6 +376,7 @@ export function stopSync(): void {
   document.removeEventListener("visibilitychange", onVisibilityChange);
   outboxSubscription?.unsubscribe();
   outboxSubscription = null;
+  lastSeenSeq = 0;
   if (retryTimer) clearTimeout(retryTimer);
   if (writeTimer) clearTimeout(writeTimer);
   retryTimer = null;
