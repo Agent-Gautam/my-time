@@ -1409,9 +1409,10 @@ next run rather than lost.
 ### Verified with a control, which is the part that mattered
 
 `lint` clean, **186 tests** (was 177), production build OK. Then two Chromium contexts,
-separate profiles, `:3000`/`:3001` — different origins so genuinely different IndexedDB —
-against the one Supabase. **`origin/main` was built and run the same way on `:3011`/`:3012`
-as a control.**
+separate profiles, two ports — different origins so genuinely different IndexedDB —
+against the one Supabase. **`origin/main` was built and served the same way as a
+control.** Only device B's build matters: A merely has to create a goal and push it,
+which any build does, and every assertion below is about B.
 
 The scenario is the reported shape, not the easy one. A fresh device that pulls A's plan
 week gets a correct plan *without* any fix, so that proves nothing. Instead: B goes
@@ -1440,9 +1441,9 @@ so that re-plan came from the engine. Both runs quiescent, so the loop trap was 
 - **D60 and D61 were already taken** by `fix/daypart-capacity` and `feature/dart-icon`,
   neither merged to `main`. This took D62. Check every live branch before claiming a
   number, not just `main`.
-- **Four junk goals named `Cross-device …` are now on the server**, created by the
-  verification runs (two by the control). They are `active` and will occupy plan slots.
-  Drop them through the UI — nothing here hard-deletes (D48).
+- **Three junk goals named `Cross-device …` are now on the server**, one per verification
+  run. They are `active` and will occupy plan slots. Drop them through the UI — nothing
+  here hard-deletes (D48).
 - Two servers off one `.next` build (`next start -p 3000` / `-p 3001`) is the cheapest
   two-device rig there is: separate origins, separate IndexedDB, one server. Worth reusing.
   Note other worktrees hold ports in the 3000–3003 range; check before assuming a port is
