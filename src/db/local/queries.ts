@@ -359,6 +359,26 @@ export function getOutboxDepth(): Promise<number> {
   return localDb.outbox.count();
 }
 
+/**
+ * The highest `seq` currently queued, or 0 when the outbox is empty.
+ *
+ * This exists so the sync engine can tell **a new local write** from **its own
+ * bookkeeping**. Dexie's `liveQuery` re-fires on any mutation to a table it observes,
+ * not only when the observed value changes — so a depth-based trigger also fires when
+ * `sync/push.ts` bumps `attempts` on a rejected row, which starts a sync, which rejects
+ * it again, which bumps it again: a permanent request loop every debounce interval, on
+ * battery, invisible except as an indicator that never settles.
+ *
+ * `seq` is `++seq` autoincrement and Dexie never reuses a value, so this is monotonic
+ * per enqueue and **cannot** be moved by an `update` or by an ack (which only ever
+ * removes rows, lowering it). "Strictly greater than last seen" is therefore exactly
+ * "someone queued a new write".
+ */
+export async function getOutboxHighWaterMark(): Promise<number> {
+  const newest = await localDb.outbox.orderBy("seq").last();
+  return newest?.seq ?? 0;
+}
+
 export async function ackOutbox(seqs: number[]): Promise<void> {
   await localDb.outbox.bulkDelete(seqs);
 }
