@@ -33,7 +33,7 @@
 // unscoped. When auth lands those three need a join, which is additive.
 
 import { NextResponse } from "next/server";
-import { and, eq, gt, gte, inArray, sql, type AnyColumn, type SQL } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, lt, type AnyColumn, type SQL } from "drizzle-orm";
 
 import type { IsoDate, IsoDateTime, Weekday } from "@/core/types";
 import { db } from "@/db/server/client";
@@ -150,9 +150,24 @@ async function ensureUser(): Promise<string> {
  * JS. One statement, no race, and a row that loses is simply not written — which also
  * leaves its `server_updated_at` alone, so losing does not spuriously re-broadcast it
  * to every other device.
+ *
+ * **`lt(column, date)`, never ``sql`${column} < ${date}` ``.** This is not style. A raw
+ * `sql` template interpolates its value as a bare parameter with no knowledge of the
+ * column it is being compared against, so a JS `Date` never reaches the `timestamptz`
+ * encoder and postgres.js rejects the whole statement with *"The `string` argument must
+ * be of type string ... Received an instance of Date"*. `lt` binds the value **to the
+ * column**, which is what applies the mapper.
+ *
+ * That bug shipped, and its blast radius is the reason this comment is long: every
+ * mutable table upserts through here, so *every* `users`, `dayparts`, `goals`, `stages`
+ * and `pushSubscriptions` push was refused, on every device, from the first sync. The
+ * plan and the append-only tables do not use this guard and synced fine, which made it
+ * look like a data problem rather than one broken helper. Nothing in `tests/sync/**`
+ * could see it: the suite runs against a scripted transport, and the SQL is only wrong
+ * once a real driver tries to encode it.
  */
 const newerThanStored = (column: AnyColumn, updatedAt: IsoDateTime): SQL =>
-  sql`${column} < ${toDb(updatedAt)}`;
+  lt(column, toDb(updatedAt));
 
 async function applyChange(change: SyncChange, userId: string): Promise<void> {
   const now = new Date();
@@ -511,6 +526,10 @@ async function applyPlanWeek(
   });
 }
 
+// Same `lt`-not-`sql` rule as `newerThanStored`, and for the same reason — see there.
+// These four are unreachable today (nothing enqueues a delete), which is exactly why
+// they are worth getting right now: an unreachable path carrying a known-fatal bug
+// fails on the day someone makes it reachable, and looks like their change broke it.
 async function applyDelete(change: SyncChange, now: Date): Promise<void> {
   const at = toDb(change.queuedAt);
   switch (change.table) {
@@ -518,19 +537,19 @@ async function applyDelete(change: SyncChange, now: Date): Promise<void> {
       await db
         .update(dayparts)
         .set({ deletedAt: at, updatedAt: at, serverUpdatedAt: now })
-        .where(and(eq(dayparts.id, change.rowId), sql`${dayparts.updatedAt} < ${at}`));
+        .where(and(eq(dayparts.id, change.rowId), lt(dayparts.updatedAt, at)));
       return;
     case "goals":
       await db
         .update(goals)
         .set({ deletedAt: at, updatedAt: at, serverUpdatedAt: now })
-        .where(and(eq(goals.id, change.rowId), sql`${goals.updatedAt} < ${at}`));
+        .where(and(eq(goals.id, change.rowId), lt(goals.updatedAt, at)));
       return;
     case "stages":
       await db
         .update(stages)
         .set({ deletedAt: at, updatedAt: at, serverUpdatedAt: now })
-        .where(and(eq(stages.id, change.rowId), sql`${stages.updatedAt} < ${at}`));
+        .where(and(eq(stages.id, change.rowId), lt(stages.updatedAt, at)));
       return;
     case "pushSubscriptions":
       await db
@@ -539,7 +558,7 @@ async function applyDelete(change: SyncChange, now: Date): Promise<void> {
         .where(
           and(
             eq(pushSubscriptions.id, change.rowId),
-            sql`${pushSubscriptions.updatedAt} < ${at}`,
+            lt(pushSubscriptions.updatedAt, at),
           ),
         );
       return;
