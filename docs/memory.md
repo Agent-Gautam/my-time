@@ -1469,6 +1469,72 @@ of anything above — safe to hand to separate sessions.
 
 ---
 
+## Session — 2026-07-31 (3) · Today opens on the plan (D62)
+
+Branch `ui/today-first`, off a `main` that now has D60 and D61 merged (both were
+verified green together before branching: lint, 184 tests, build).
+
+**Today was a gate.** The session list did not exist until the user typed a number and
+pressed "Check in", and `logSlot` early-returned unless a check-in was active. Now Today
+shows the sessions the plan put in the current daypart, and stating available time is an
+explicit panel called **"Adjust today"**. Recorded as **D62**; `PRD.md` §5 and §6.5 and
+`Architecture.md` §9.2 updated in the same change, as CLAUDE.md requires.
+
+**D8 is not contradicted and the decision says so explicitly** — the plan is still laid
+out ahead, reconciliation still happens on a stated time, and D8's "the gap is visible
+immediately" is better served now that *"2h 30m planned · 1h 45m left"* is on the
+default screen instead of behind a form.
+
+### Things worth knowing before touching this again
+
+- **`reconcileNow`'s `availableMinutes` is `number | null`, and `null` is a real
+  branch.** Not a large sentinel: `core/reconcile.ts` allocates a knapsack table of
+  `availableMinutes + 1` cells, so `Infinity` throws and "big enough" quietly allocates
+  an enormous array (D47) — on the *default* path of the main screen. 4 new tests in
+  `tests/features/planner.test.ts`, **all verified to fail without the branch**.
+- **The unpacked default is a decision, not laziness.** Packing against the daypart's
+  remaining time would show "won't fit" unasked, which presumes the evening is free —
+  the unrequested verdict D21 rules out. "Won't fit today" appears only after a time is
+  stated.
+- **Stated time lives in the `check_ins` row, not React state.** `getLatestCheckIn` was
+  already there, bounded on `[date+daypartId]`, and was dead code. Time already spent is
+  now *derived* from the day's `session_logs` instead of a manual `setRemainingMinutes`
+  decrement — reload-safe, and it cannot drift from what was recorded. Only `done`
+  counts; a skip must not shrink the remaining budget.
+- **Two loading races, both closed.** `getLatestCheckIn` resolves to `undefined` when
+  the user never stated a time, which is indistinguishable from `useLiveQuery`'s "still
+  loading" — same trap `dataReady` exists for, so it is wrapped as `{ row }` and the
+  loader is held until it settles. Without that, anyone who had stated a time saw the
+  full list render and then visibly re-pack. And `<AdjustToday>` is **keyed** on the
+  stated value, because it seeds its input from a prop in `useState`, which runs once
+  per mount.
+- **Only the goal's name links to its page**, not the whole card. Done and Skipped are
+  why the card exists and are tapped far more often; a card-wide link sits under both
+  waiting to swallow a mis-aimed tap on a phone.
+- The stored concept keeps its name — `check_ins`, `LocalCheckIn`, `CheckIn`,
+  `putCheckIn`, the `checkIns` sync table. Renaming would reshape the schema, a frozen
+  types file and the sync protocol at once (D51). **UI text only.**
+
+### Verified, and what is NOT
+
+`npm run lint`, **188 tests** (+4), `npm run build` all pass.
+
+**No browser verification happened.** Both automation paths failed at the same time —
+the Claude-in-Chrome extension reported "not connected", and Playwright MCP refused
+with *"Browser is already in use … use --isolated"*. The remaining Chrome processes were
+all the ordinary install, so killing them was not something to do unasked. The following
+are therefore **unproven** and should be the first thing anyone checks:
+
+1. Tapping **Done** with no time ever stated — this is the exact path the old
+   `activeCheckIn` guard blocked, so it is the highest-risk claim in the change.
+2. **Adjust today** → state fewer minutes than planned → list re-packs and "Won't fit
+   today" appears with no action buttons.
+3. **Reload** → the stated time is still in effect.
+4. Opening Today outside any daypart → "Remaining" reads "—", not "0m".
+5. The night-daypart wrap after midnight (D53), which this seam has broken once before.
+
+---
+
 ## App icon and loading mark (D61) — on `feature/dart-icon`, not yet merged
 
 The app icon and the check-in view's loading state are now a **dart and dartboard**,

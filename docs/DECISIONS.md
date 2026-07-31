@@ -1003,6 +1003,52 @@ rasteriser dependency added) sharing the same coordinates as the `DartMark` comp
 `src/components/dart-mark.tsx`, so the static mark, the loop's resting frame, and the
 icon files are provably the same drawing.
 
+### D62 — Today opens on the plan; stating your time is an explicit, occasional act
+
+Today was a gate. `CheckinView` rendered a form first, and the session list did not
+exist until the user typed a number and pressed "Check in" — `logSlot` even
+early-returned unless a check-in was active. So the most common thing a user does,
+*open the app and see what to do*, cost a form every time, including on the ordinary
+days when nothing about the schedule had changed. The app's stated purpose is to remove
+worry; making the user file a return before it will tell them anything works against
+that.
+
+**Today now shows the sessions the plan already put in the current daypart.** Stating
+available time moves into an explicit panel, called **"Adjust today"** on screen, for
+the days that are not ordinary.
+
+**This does not contradict D8.** The plan is still laid out ahead, reconciliation still
+happens when a time is stated, and D8's requirement that "the gap is visible
+immediately" is *better* served: the gap is now on the default screen — *"2h 30m
+planned · 1h 45m left"* — instead of behind a form. What changed is only that
+reconciliation stopped being the price of admission.
+
+**The default list is unpacked, and that is the point.** Packing against the time
+remaining in the daypart would have shown "won't fit" without being asked, which
+presumes the whole evening is free and is exactly the kind of unrequested verdict D21
+rules out — capacity is a ceiling, not a target. So the default states the two numbers
+and lets the user draw the conclusion. **"Won't fit today" appears only after a time is
+stated.**
+
+Three consequences worth knowing:
+
+- **`reconcileNow`'s `availableMinutes` is `number | null`**, and `null` is a real
+  branch that skips packing entirely. It is not a large sentinel: `reconcileDaypart`
+  allocates a knapsack table of `availableMinutes + 1` cells, so `Infinity` throws and
+  "big enough" quietly allocates an enormous array on a budget phone (D47). Since
+  nothing can be dropped when no limit was given, there is also nothing for the packing
+  pass to decide.
+- **The stated time lives in the `check_ins` row, not in component state.** A reload or
+  a PWA resume would otherwise forget it silently. Time already spent is derived from
+  the day's `session_logs` rather than decremented in memory, which is both reload-safe
+  and unable to drift from what was actually recorded. `getLatestCheckIn` already
+  existed, bounded on `[date+daypartId]`, and was dead code until now.
+- **The stored concept keeps its name.** `check_ins`, `LocalCheckIn`, `CheckIn` in the
+  frozen `core/types.ts`, `putCheckIn` and the `checkIns` sync table are all unchanged.
+  The fact being recorded did not change — the user said they had N minutes for this
+  daypart at time T — and renaming it would reshape the schema, a frozen types file and
+  the sync protocol at once, which D51 forbids. The rename is UI text only.
+
 ---
 
 ## Open questions

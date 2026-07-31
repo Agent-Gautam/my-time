@@ -192,6 +192,101 @@ describe("reconcileNow", () => {
     expect(keep.length).toBeGreaterThan(0);
     for (const r of keep) expect(r.reason.trim().length).toBeGreaterThan(0);
   });
+
+  // D62 — Today opens on the plan, so the common call states no limit at all.
+  describe("availableMinutes: null — no limit stated", () => {
+    it("keeps every planned session and drops nothing", async () => {
+      await seedIfEmpty(THURSDAY_EVENING);
+      await putGoalWithStage(
+        goal(),
+        stage({ sessionMinutes: 45, eligibleDayparts: [NIGHT.id] }),
+        THURSDAY_EVENING,
+      );
+      await relayoutWeek({ now: THURSDAY_EVENING });
+
+      const unlimited = await reconcileNow({
+        now: THURSDAY_EVENING,
+        daypartId: NIGHT.id,
+        availableMinutes: null,
+      });
+
+      expect(unlimited.keep.length).toBeGreaterThan(0);
+      expect(unlimited.dropped).toHaveLength(0);
+    });
+
+    it("keeps a session that a stated time would have dropped", async () => {
+      await seedIfEmpty(THURSDAY_EVENING);
+      await putGoalWithStage(
+        goal(),
+        stage({ sessionMinutes: 45, eligibleDayparts: [NIGHT.id] }),
+        THURSDAY_EVENING,
+      );
+      await relayoutWeek({ now: THURSDAY_EVENING });
+
+      const packed = await reconcileNow({
+        now: THURSDAY_EVENING,
+        daypartId: NIGHT.id,
+        availableMinutes: 30, // less than one box
+      });
+      const unlimited = await reconcileNow({
+        now: THURSDAY_EVENING,
+        daypartId: NIGHT.id,
+        availableMinutes: null,
+      });
+
+      expect(packed.keep).toHaveLength(0);
+      expect(unlimited.keep.length).toBeGreaterThan(0);
+    });
+
+    // The reason `null` is a real branch and not a large sentinel: `reconcileDaypart`
+    // allocates a knapsack table of `availableMinutes + 1` cells, so "big enough"
+    // means "allocate an enormous array on a budget phone" (D47) and `Infinity`
+    // throws outright. Neither is acceptable for the DEFAULT path of the main screen.
+    it("does not allocate against a capacity", async () => {
+      await seedIfEmpty(THURSDAY_EVENING);
+      await putGoalWithStage(goal(), stage({ eligibleDayparts: [NIGHT.id] }), THURSDAY_EVENING);
+      await relayoutWeek({ now: THURSDAY_EVENING });
+
+      const started = performance.now();
+      const unlimited = await reconcileNow({
+        now: THURSDAY_EVENING,
+        daypartId: NIGHT.id,
+        availableMinutes: null,
+      });
+      const elapsed = performance.now() - started;
+
+      expect(unlimited.keep.length).toBeGreaterThan(0);
+      // A sentinel large enough to never drop anything (say a year of minutes) would
+      // build a >500k-cell table per call and blow well past this.
+      expect(elapsed).toBeLessThan(1_000);
+    });
+
+    it("still orders by score, so the most pressing session is first", async () => {
+      await seedIfEmpty(THURSDAY_EVENING);
+      await putGoalWithStage(
+        goal({ id: "goal-a", name: "A", tier: 3 }),
+        stage({ id: "stage-a", goalId: "goal-a", eligibleDayparts: [NIGHT.id] }),
+        THURSDAY_EVENING,
+      );
+      await putGoalWithStage(
+        goal({ id: "goal-b", name: "B", tier: 1 }),
+        stage({ id: "stage-b", goalId: "goal-b", eligibleDayparts: [NIGHT.id] }),
+        THURSDAY_EVENING,
+      );
+      await relayoutWeek({ now: THURSDAY_EVENING });
+
+      const { keep } = await reconcileNow({
+        now: THURSDAY_EVENING,
+        daypartId: NIGHT.id,
+        availableMinutes: null,
+      });
+
+      // Ordering is not incidental here — with nothing dropped it is the only thing
+      // telling the user what to do first.
+      expect(keep.length).toBeGreaterThan(1);
+      expect(keep[0].goal.tier).toBeLessThanOrEqual(keep[keep.length - 1].goal.tier);
+    });
+  });
 });
 
 describe("logSession", () => {
