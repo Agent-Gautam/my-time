@@ -12,6 +12,7 @@ export {
   startSync,
   stopSync,
   subscribeSyncEngine,
+  type RelayoutAfterPull,
   type SyncEngineState,
   type SyncOutcome,
 } from "./engine";

@@ -921,6 +921,79 @@ down here rather than built. See **O14**.
 
 ---
 
+### D62 — Re-planning after a pull is injected into the engine, not imported by it
+
+> Numbering note: D60 and D61 were taken by two parallel branches not yet on `main`
+> (`fix/daypart-capacity`, `feature/dart-icon`). Reserved D62 to avoid a collision.
+
+`relayoutWeek` was called from four screens — the two goal-form paths, daypart
+settings, and check-in — and from nothing in `sync/`. Every one of those is a *local*
+edit. A device that received goals, stages or dayparts **by pull** therefore kept
+whatever plan it already had. Observed directly: a second device pulled down 5 goals
+and 6 active stages and its plan still held the 2 slots laid out when one goal
+existed. The goals were listed; Today was empty. Nothing was broken, nothing was
+reported, and the plan was silently months stale.
+
+So something has to re-plan after a pull. The question is who owns it, because the
+obvious answers are all wrong in a specific way.
+
+**Rejected — `sync/` imports `features/plan/planner`.** It inverts the layering:
+`sync/` sits below `features/` (Architecture.md §8), and pull already refuses to touch
+`db/local/mutations.ts` for the same reason. It is not caught by an ESLint guard, which
+makes it worse, not better — the guards exist because layering violations are invisible
+otherwise.
+
+**Rejected — a UI effect watching `lastPullAt`.** This one is not merely inelegant; it
+cannot work. `memo.write({ cursors, lastPullAt: now() })` runs on **every round of every
+run**, so `lastPullAt` moves after a run that pulled zero rows. An effect on it would
+re-plan constantly, and re-planning writes an outbox row, which bumps the outbox
+high-water mark, which the write-trigger already watches: enqueue → sync → new
+`lastPullAt` → re-plan → enqueue. A closed cycle at `WRITE_DEBOUNCE_MS`. That is the
+D47 bug exactly — a request every 1.5s whose only symptom is a status indicator that
+never settles, which reads as "working on it" rather than as a fault.
+
+**Chosen — the UI hands `relayoutWeek` down at `startSync`; the engine calls it.**
+`sync/` declares the shape (`RelayoutAfterPull = (now) => Promise<unknown>`) and knows
+nothing else. `use-sync-status.ts` is already the composition root — it is the one place
+that starts the engine, and it is on the UI side of the seam — so it is where the two
+get introduced. The dependency points up, and the engine stays testable with a spy.
+
+Three details that are load-bearing:
+
+- **Registration is on `startSync`, not `configureSync`.** `configureSync` resets
+  `state` and nulls `inFlight`. `useSyncStatus`'s effect is double-invoked under
+  StrictMode, so registering there would clear a live run's coalescing guard and let a
+  second run push the same head of the outbox twice. `startSync` is idempotent, and the
+  registration sits above its `started` guard so a remount re-registers harmlessly.
+- **The trigger is what `applyPull` wrote, not that a pull happened.** `ApplyOutcome`
+  gains `inputsChanged`, true only when a **daypart, goal or stage row was actually
+  written** — not received. The server re-sends an overlap on every pull by design, and
+  a page that loses every LWW race changed nothing. `planWeeks` are deliberately
+  excluded: they are layout's *output*, so applying one can never raise the flag, and
+  nothing the relayout itself writes can re-trigger it.
+- **Once per run, after the rounds, with the debt held in a module flag** that clears
+  only when the relayout returns. If it throws, the run backs off and the next one
+  retries — there is no second pull coming to re-raise the flag, because the rows are
+  already in the mirror.
+
+It settles in one extra round trip. B pulls A's goal, re-plans, and the outbox row it
+leaves behind gets pushed on the next sync; A pulls B's week and adopts it verbatim
+without re-planning, because a week is not an input. Then quiet.
+
+**Session logs are excluded, by decision and not by oversight.** They *are* a layout
+input — `checkin-view.tsx` re-plans after every local `logSession`, and `layoutWeek`
+reads history. Including them here is loop-safe (append-only, insert-if-absent, so a
+re-sent row applies zero). It was left out because layout depends on `now` for
+"dayparts remaining today", so two devices re-planning off each other's logs produce
+slightly different weeks and trade them back and forth on every check-in — churn on the
+most frequent sync there is, for a plan D45 already treats as derived and disposable.
+
+The cost is real and worth stating plainly: **a device shows a session another device
+already completed until its next local re-plan.** Revisit if that becomes annoying in
+use; the fix is one more counter in `applyPull`.
+
+---
+
 ## Open questions
 
 - ~~O1 — Planning horizon~~ → resolved by **D16**.

@@ -111,12 +111,24 @@ export const getServerSyncEngineSnapshot = (): SyncEngineState => SERVER_STATE;
 // Configuration
 // ---------------------------------------------------------------------------
 
+/**
+ * Re-plan the week, because a pull brought down goals, stages or dayparts.
+ *
+ * **Injected, never imported (D62).** `sync/` sits below `features/`, so it cannot
+ * reach `features/plan/planner` for `relayoutWeek`; the UI hands the function down at
+ * `startSync`, and the engine only knows this shape. `now` is passed rather than read,
+ * the same as everywhere else (D53).
+ */
+export type RelayoutAfterPull = (now: IsoDateTime) => Promise<unknown>;
+
 export interface SyncEngineOptions {
   transport?: SyncTransport;
   memo?: SyncMemoStore;
   /** Injected for tests. Production reads the one sanctioned clock (D53). */
   now?: () => IsoDateTime;
   batchSize?: number;
+  /** Usually registered through `startSync`; here so tests can script it too. */
+  onSchedulingInputsChanged?: RelayoutAfterPull | null;
 }
 
 interface ResolvedOptions {
@@ -124,33 +136,35 @@ interface ResolvedOptions {
   memo: SyncMemoStore;
   now: () => IsoDateTime;
   batchSize: number;
+  onSchedulingInputsChanged: RelayoutAfterPull | null;
 }
 
 let options: ResolvedOptions | null = null;
 
-function resolved(): ResolvedOptions {
-  options ??= {
+function defaults(): ResolvedOptions {
+  return {
     transport: httpTransport(),
     memo: createMemoStore(),
     now: () => localNow(),
     batchSize: PUSH_BATCH_SIZE,
+    onSchedulingInputsChanged: null,
   };
+}
+
+function resolved(): ResolvedOptions {
+  options ??= defaults();
   return options;
 }
 
 /** Test seam. Also resets the engine's in-memory state, so runs cannot leak between tests. */
 export function configureSync(overrides: SyncEngineOptions = {}): void {
-  const base = {
-    transport: httpTransport(),
-    memo: createMemoStore(),
-    now: () => localNow(),
-    batchSize: PUSH_BATCH_SIZE,
-  };
-  options = { ...base, ...overrides };
+  options = { ...defaults(), ...overrides };
+  options.onSchedulingInputsChanged ??= null;
   state = { syncing: false, lastPullAt: null, lastError: null, blocked: false };
   failures = 0;
   inFlight = null;
   rerunRequested = false;
+  relayoutPending = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -169,6 +183,16 @@ export interface SyncOutcome {
 let inFlight: Promise<SyncOutcome> | null = null;
 let rerunRequested = false;
 let failures = 0;
+
+/**
+ * A pull has brought down scheduling inputs and the week has not been re-planned yet.
+ *
+ * Module-level rather than run-local so the debt survives a failed attempt: if the
+ * relayout itself throws, the run lands in the catch and backs off, and there is no
+ * second pull coming to re-raise the flag — the same rows are already in the mirror, so
+ * the next pull applies nothing. Cleared only once the relayout has actually returned.
+ */
+let relayoutPending = false;
 
 /**
  * Run sync now, coalescing concurrent callers.
@@ -195,7 +219,7 @@ export function syncNow(): Promise<SyncOutcome> {
 }
 
 async function runSync(): Promise<SyncOutcome> {
-  const { transport, memo, now, batchSize } = resolved();
+  const { transport, memo, now, batchSize, onSchedulingInputsChanged } = resolved();
   const outcome: SyncOutcome = {
     pushed: 0,
     pulled: 0,
@@ -246,10 +270,33 @@ async function runSync(): Promise<SyncOutcome> {
       const applied = await applyPull(response.pulled);
       outcome.pulled += applied.applied;
       outcome.weeksApplied += applied.weeksApplied;
+      if (applied.inputsChanged) relayoutPending = true;
 
       cursors = response.cursors;
       memo.write({ cursors, lastPullAt: now() });
       pulling = response.hasMore;
+    }
+
+    // Re-plan, if this run pulled down goals, stages or dayparts (D62). A device that
+    // received someone else's goals used to keep whatever plan it already had — the
+    // goals appeared and Today stayed empty, because `relayoutWeek` was only ever
+    // called from the four screens that edit those rows locally.
+    //
+    // **Once per run, after the rounds, driven by what `applyPull` actually wrote** —
+    // not by a `liveQuery` and not by `lastPullAt`. The relayout writes planWeeks,
+    // planSlots and an outbox row, and any observer of those would be re-triggered by
+    // the very write it just caused: enqueue → high-water bump → sync → re-plan →
+    // enqueue, a request every `WRITE_DEBOUNCE_MS` forever. That is the D47 loop
+    // exactly. This flag can only be raised by a row arriving from the server, and
+    // nothing the relayout writes can raise it: planWeeks are layout's output, and
+    // applying one never sets `inputsChanged`.
+    //
+    // The outbox row it leaves behind still gets pushed — the write-trigger sees the
+    // enqueue and runs one more sync, which pulls nothing new, re-plans nothing, and
+    // stops. One extra round trip, then quiet.
+    if (relayoutPending) {
+      if (onSchedulingInputsChanged) await onSchedulingInputsChanged(now());
+      relayoutPending = false;
     }
 
     failures = 0;
@@ -325,9 +372,19 @@ function onVisibilityChange(): void {
  * Start the automatic triggers. Idempotent, and a no-op during SSR — it is called from
  * `useSyncStatus`, which is mounted for the whole session because the status indicator
  * is (D46), so "app start" and "the indicator exists" are the same moment.
+ *
+ * It is also where the caller hands down `relayoutWeek` (D62). Registration sits
+ * *above* the `started` guard so a StrictMode remount re-registers harmlessly, and it
+ * is deliberately not done through `configureSync`: that resets `state` and nulls
+ * `inFlight`, so a double-invoked effect would clear a live run's guard and let a
+ * second run push the same head of the outbox twice.
  */
-export function startSync(): void {
-  if (started || typeof window === "undefined") return;
+export function startSync(onSchedulingInputsChanged?: RelayoutAfterPull): void {
+  if (typeof window === "undefined") return;
+  if (onSchedulingInputsChanged) {
+    resolved().onSchedulingInputsChanged = onSchedulingInputsChanged;
+  }
+  if (started) return;
   started = true;
 
   // The persisted stamp, published before the first run. Without this the indicator
