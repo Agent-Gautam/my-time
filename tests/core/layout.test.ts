@@ -296,6 +296,137 @@ describe("layoutWeek — general sanity", () => {
   });
 });
 
+// D60. Before this, `activeCap` was enforced nowhere: layout ignored it entirely, and
+// the goals screen counted a stage against every daypart it was *eligible* for, so two
+// goals eligible everywhere reported all four dayparts full while no plan existed.
+describe("layoutWeek — daypart active cap (D60)", () => {
+  const cappedMorning: Daypart = { ...morning, activeCap: 2 };
+  const cappedEvening: Daypart = { ...evening, activeCap: 2 };
+  const CAPPED = [cappedMorning, cappedEvening];
+
+  /** `count` distinct morning-only stages, each wanting a session every day. */
+  function morningStages(count: number): { goals: Goal[]; stages: Stage[] } {
+    const goals: Goal[] = [];
+    const stages: Stage[] = [];
+    for (let i = 0; i < count; i++) {
+      goals.push(goal({ id: `goal-${i}`, name: `Goal ${i}` }));
+      stages.push(
+        stage({
+          id: `stage-${i}`,
+          goalId: `goal-${i}`,
+          eligibleDayparts: ["morning"],
+          cadenceCount: 7,
+        }),
+      );
+    }
+    return { goals, stages };
+  }
+
+  function countByDate(slots: PlanSlot[], daypartId: string): Map<string, number> {
+    const counts = new Map<string, number>();
+    for (const slot of slots) {
+      if (slot.daypartId !== daypartId) continue;
+      counts.set(slot.date, (counts.get(slot.date) ?? 0) + 1);
+    }
+    return counts;
+  }
+
+  it("never places more distinct stages in one daypart on one day than its cap", () => {
+    const { goals, stages } = morningStages(4);
+    const result = run({ goals, stages, dayparts: CAPPED });
+
+    expect(result.length).toBeGreaterThan(0);
+    for (const [, count] of countByDate(result, "morning")) {
+      expect(count).toBeLessThanOrEqual(2);
+    }
+  });
+
+  it("leaves the day short rather than dropping a session to make room (D21)", () => {
+    // Capacity is a ceiling, not a target: the fourth stage does not evict anyone, it
+    // simply does not get placed that morning.
+    const { goals, stages } = morningStages(4);
+    const result = run({ goals, stages, dayparts: CAPPED });
+    const monday = result.filter((s) => s.date === "2026-07-27");
+    expect(monday).toHaveLength(2);
+  });
+
+  it("gives the scarcest stage the slot when the cap binds (D9)", () => {
+    // Two stages want morning; only one can have it. `flexible` could also run in the
+    // evening, `morningOnly` could not — so morning must go to `morningOnly`.
+    const tightMorning: Daypart = { ...morning, activeCap: 1 };
+    const morningOnly = stage({
+      id: "stage-scarce",
+      goalId: "goal-scarce",
+      eligibleDayparts: ["morning"],
+      cadenceCount: 7,
+    });
+    const flexible = stage({
+      id: "stage-flexible",
+      goalId: "goal-flexible",
+      eligibleDayparts: ["morning", "evening"],
+      cadenceCount: 7,
+    });
+
+    const result = run({
+      goals: [goal({ id: "goal-scarce" }), goal({ id: "goal-flexible" })],
+      stages: [morningOnly, flexible],
+      dayparts: [tightMorning, cappedEvening],
+    });
+
+    const mondayMorning = result.filter(
+      (s) => s.date === "2026-07-27" && s.daypartId === "morning",
+    );
+    expect(mondayMorning).toHaveLength(1);
+    expect(mondayMorning[0].stageId).toBe("stage-scarce");
+  });
+
+  // The D54 lesson, applied to the cap: a rule enforced only in `placeRemaining` is
+  // silently exceeded by a week that was laid out under a looser cap.
+  it("drops retained slots that no longer fit after the cap is lowered", () => {
+    const { goals, stages } = morningStages(3);
+    const underLooseCap = run({ goals, stages, dayparts: DAYPARTS }); // activeCap 5
+    expect(countByDate(underLooseCap, "morning").get("2026-07-28")).toBe(3);
+
+    const underTightCap = run({
+      goals,
+      stages,
+      dayparts: CAPPED,
+      existing: underLooseCap,
+    });
+    for (const [, count] of countByDate(underTightCap, "morning")) {
+      expect(count).toBeLessThanOrEqual(2);
+    }
+  });
+
+  it("stays idempotent and deterministic while the cap binds (§4.2 rules 1 and 2)", () => {
+    const { goals, stages } = morningStages(4);
+    const input = { goals, stages, dayparts: CAPPED };
+
+    const first = run(input);
+    expect(run(input)).toEqual(first);
+    expect(run({ ...input, existing: first })).toEqual(first);
+  });
+
+  it("does not depend on the order `existing` is passed in", () => {
+    const { goals, stages } = morningStages(4);
+    const input = { goals, stages, dayparts: CAPPED };
+    const first = run(input);
+
+    const reversed = run({ ...input, existing: [...first].reverse() });
+    expect(reversed).toEqual(run({ ...input, existing: first }));
+  });
+
+  it("treats a cap of zero as a closed daypart, and reroutes what it can", () => {
+    const closedMorning: Daypart = { ...morning, activeCap: 0 };
+    const flexible = stage({ eligibleDayparts: ["morning", "evening"], cadenceCount: 3 });
+
+    const result = run({ stages: [flexible], dayparts: [closedMorning, cappedEvening] });
+
+    expect(result.length).toBeGreaterThan(0);
+    expect(result.every((s) => s.daypartId === "evening")).toBe(true);
+  });
+});
+
 function diffDaysUtil(a: string, b: string): number {
   const toUtc = (d: string) => {
     const [y, m, day] = d.split("-").map(Number);

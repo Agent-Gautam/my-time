@@ -3,7 +3,13 @@
 // Active and planned goals, with free-slot counts per daypart always visible
 // (D31) — capacity is a ceiling, never a target, so this only ever reports the
 // fact ("evening: 2 of 3 slots used"), never nudges the user to fill it (D21).
+//
+// The capacity numbers come from the **plan**, not from how many goals declare a
+// daypart eligible (D60). Two numbers rather than one: today's occupancy is concrete,
+// but "can I start another goal in the evening?" is answered by how many days of the
+// week still have room — a daypart can be full tonight and open on four other days.
 
+import { useState } from "react";
 import Link from "next/link";
 import { useLiveQuery } from "dexie-react-hooks";
 import { Plus } from "lucide-react";
@@ -11,7 +17,13 @@ import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { getDayparts, getDaypartCapacity, getGoalsWithStage } from "@/db/local/queries";
+import {
+  getDayparts,
+  getDaypartCapacity,
+  getGoalsWithStage,
+  type DaypartCapacity,
+} from "@/db/local/queries";
+import { localNow } from "@/lib/daypart";
 import { formatDuration } from "@/lib/duration";
 
 const TIER_LABEL: Record<number, string> = {
@@ -20,9 +32,24 @@ const TIER_LABEL: Record<number, string> = {
   3: "Background",
 };
 
+/**
+ * States the fact, never the suggestion (D21). "Room on N more days" is a count, not
+ * an invitation — there is deliberately no call to action anywhere in this string.
+ */
+function describeCapacity(cap: DaypartCapacity): string {
+  const today = `${cap.usedToday} of ${cap.activeCap} today`;
+  if (cap.activeCap === 0) return "closed";
+  if (cap.freeDays === 0) return `${today} · full all week`;
+  return `${today} · room on ${cap.freeDays} of ${cap.windowDays} days`;
+}
+
 export function GoalsList() {
+  // Read once at mount, not per render: this drives a read-only summary, and a value
+  // that changes identity on every render would re-run the live query forever. Writes
+  // elsewhere re-read `localNow()` at the moment of the action (D53).
+  const [now] = useState(localNow);
   const dayparts = useLiveQuery(() => getDayparts(), []);
-  const capacity = useLiveQuery(() => getDaypartCapacity(), []);
+  const capacity = useLiveQuery(() => getDaypartCapacity(now), [now]);
   const goals = useLiveQuery(
     () => getGoalsWithStage({ states: ["active", "planned"] }),
     [],
@@ -34,12 +61,19 @@ export function GoalsList() {
     <div className="flex flex-col gap-6">
       <section className="flex flex-col gap-2">
         <h2 className="text-section font-semibold text-text">Capacity</h2>
+        <p className="text-label text-text-subtle">
+          How many different goals each part of the day is holding, from the current
+          plan.
+        </p>
         <div className="flex flex-wrap gap-2">
           {(dayparts ?? []).map((daypart) => {
             const cap = capacityByDaypart.get(daypart.id);
             return (
               <Badge key={daypart.id} variant="secondary" className="capitalize">
-                {daypart.name}: {cap ? `${cap.used} of ${cap.activeCap} used` : "…"}
+                {daypart.name}:{" "}
+                <span className="normal-case">
+                  {cap ? describeCapacity(cap) : "…"}
+                </span>
               </Badge>
             );
           })}
