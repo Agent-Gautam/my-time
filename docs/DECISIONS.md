@@ -919,6 +919,48 @@ keeps strangers out for real, because nothing secret ships in the bundle. It cos
 gate screen and a recovery story for a forgotten passphrase, which is why it is written
 down here rather than built. See **O14**.
 
+### D60 — The daypart cap is a scheduling constraint, not an admission test
+
+`activeCap` (D7, D11) was enforced **nowhere**. `layoutWeek` ignored it entirely, and
+the goals screen computed occupancy as *"how many active stages list this daypart as
+eligible"*. Reported from use: with two goals, both eligible everywhere, all four
+dayparts read "2 of 2 used" — before a single session had been scheduled anywhere.
+
+The counting rule was the bug, and it could not have been right. Eligibility is a
+**set** (D7): meditation eligible for morning-or-evening does not occupy both, it
+occupies whichever one the scheduler picks, and it may pick differently on different
+days. Occupancy is therefore not knowable when a goal is created. **Only layout knows
+where a session actually lands**, so that is where the cap belongs.
+
+The unit is `(date, daypart)`: at most `activeCap` distinct stages placed in one daypart
+on one day. D11's constraint is about attention — *"how many separate things am I doing
+this evening"* — which is a daily question. A weekly cap would let one session a week
+permanently consume a slot, and a lifetime cap is just the eligibility count again.
+
+Consequences, each deliberate:
+
+- **The cap is enforced in `retainValidExisting` as well as `placeRemaining`.** A
+  retained slot occupies its daypart exactly as a fresh one does, so a cap checked only
+  on placement is silently exceeded by any week laid out before the cap was lowered.
+  This is the D54 failure shape, which is why it is called out here rather than left to
+  be rediscovered.
+- **Retention is processed scarcest-first (D9), not in map order.** When the cap binds,
+  the stage with the fewest alternatives keeps the slot, and the result no longer
+  depends on the order the caller passed `existing` in (§4.2 rule 1).
+- **A capped-out day is left short. Nothing is evicted to make room** (D21): capacity is
+  a ceiling, not a target. The stage tries again the next day.
+- **`getDaypartCapacity` reads the plan**, and returns two numbers instead of one —
+  today's occupancy, and how many days this week still have room. One is not enough to
+  act on: a daypart can be full tonight and open on four other days, and *"can I start
+  another goal here?"* is the question D31 exists to answer.
+
+**Known gap, recorded rather than fixed.** `pace.cadenceStatus` computes feasibility
+from rest gaps and `maxPerWeek`, and does not know about the cap. So a stage starved by
+a full daypart is under-placed without the check-in screen explaining why. The goals
+screen does now say "full all week", which is the visible fact, but the two surfaces do
+not yet agree. Fixing it means teaching `pace.ts` about capacity, which is a larger
+change than this one and wants its own decision.
+
 ---
 
 ## Open questions

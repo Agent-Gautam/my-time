@@ -6,6 +6,7 @@
 // bounded by the active cap (D11) and a full read of those is fine.
 
 import type { GoalState, IsoDate, IsoDateTime } from "@/core/types";
+import { addDays, dateOnly, isoWeekStart } from "@/core/dateUtils";
 
 import {
   localDb,
@@ -114,44 +115,70 @@ export async function getGoalsWithStage(
 }
 
 /**
- * Per-daypart capacity against the active cap (D11), for the always-visible
- * free-slot counts (D31).
+ * Per-daypart capacity against the active cap (D11), for the always-visible free-slot
+ * counts (D31).
  *
- * **`free` is a ceiling, never a target.** Show that a slot is free; never prompt
- * the user to fill it (D21, D31).
+ * **Read from the plan, not from eligibility (D60).** This used to count a stage
+ * against every daypart it was *eligible* for, which is not what occupancy means:
+ * eligibility is a set (D7) and a session lands in exactly one of its members. Two
+ * goals eligible in all four dayparts therefore reported all four as fully used, before
+ * a single session had been scheduled anywhere. Only the scheduler knows where sessions
+ * actually go, so the answer comes from `planSlots` — the same rows `layoutWeek`
+ * produced under the same cap.
  *
- * One bounded read of active stages rather than a `.count()` per daypart, because
- * the count has to join goal state: dropping a goal leaves its stages `active`
- * (`StageState` has no "dropped" member), so counting stages alone would keep
- * reserving capacity for goals the user has already dropped. Stages and goals are
- * both capped by D11, so a full read of them is the sanctioned case (D47).
+ * **`free` is a ceiling, never a target.** Show that a slot is free; never prompt the
+ * user to fill it (D21, D31).
+ *
+ * Two numbers, because one is not enough to act on. `usedToday` is the concrete "what
+ * does this evening look like"; `freeDays` is what actually answers *"can I start
+ * another goal here?"* — a daypart can be full tonight and open on four other days.
+ *
+ * Bounded (D47): one indexed week of plan slots, which `layoutWeek` already caps in
+ * size, plus the daypart table.
  */
 export interface DaypartCapacity {
   daypartId: string;
   activeCap: number;
-  used: number;
-  free: number;
+  /** Distinct stages the plan puts in this daypart today. */
+  usedToday: number;
+  /** Days in the current week where this daypart is still under its cap. */
+  freeDays: number;
+  /** Days the window covers, so `freeDays` can be rendered as "3 of 7". */
+  windowDays: number;
 }
 
-export async function getDaypartCapacity(): Promise<DaypartCapacity[]> {
-  const [dayparts, activeGoals, activeStages] = await Promise.all([
+export async function getDaypartCapacity(now: IsoDateTime): Promise<DaypartCapacity[]> {
+  const today = dateOnly(now);
+  const weekStart = isoWeekStart(today);
+  const [dayparts, slots] = await Promise.all([
     getDayparts(),
-    getActiveGoals(),
-    getActiveStages(),
+    getPlanSlotsForWeek(weekStart),
   ]);
 
-  const activeGoalIds = new Set(activeGoals.map((goal) => goal.id));
-  const live = activeStages.filter((stage) => activeGoalIds.has(stage.goalId));
+  // `${date}|${daypartId}` -> distinct stage ids. Distinct because the cap counts
+  // *things being done*, and the same stage cannot legitimately appear twice in one
+  // daypart on one day anyway (D54) — a Set makes that assumption explicit rather than
+  // load-bearing.
+  const byDaypartDay = new Map<string, Set<string>>();
+  for (const slot of slots) {
+    const key = `${slot.date}|${slot.daypartId}`;
+    const seen = byDaypartDay.get(key);
+    if (seen) seen.add(slot.stageId);
+    else byDaypartDay.set(key, new Set([slot.stageId]));
+  }
+
+  const weekDates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
   return dayparts.map((daypart) => {
-    const used = live.filter((stage) =>
-      stage.eligibleDayparts.includes(daypart.id),
-    ).length;
+    const usedOn = (date: IsoDate) =>
+      byDaypartDay.get(`${date}|${daypart.id}`)?.size ?? 0;
+
     return {
       daypartId: daypart.id,
       activeCap: daypart.activeCap,
-      used,
-      free: Math.max(daypart.activeCap - used, 0),
+      usedToday: usedOn(today),
+      freeDays: weekDates.filter((date) => usedOn(date) < daypart.activeCap).length,
+      windowDays: weekDates.length,
     };
   });
 }

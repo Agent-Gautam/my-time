@@ -1368,3 +1368,154 @@ the real Supabase:
   append-only facts and removing them would violate D32.
 - **`npm run test` now touches the network** when `.env.local` is present, via
   `process.loadEnvFile`. Node 22 built-in, no dependency added (D50).
+
+---
+
+## Session — 2026-07-31 (2) · review triage, and the daypart cap (D60)
+
+A review produced 16 findings. They were triaged into six groups; **only the capacity
+one was built.** The rest are written up below so another session can take them without
+re-deriving the analysis.
+
+### What was built — D60, the daypart cap
+
+`activeCap` was enforced **nowhere**. `layoutWeek` ignored it completely, and
+`getDaypartCapacity` counted a stage against every daypart it was *eligible* for — so
+two goals eligible everywhere reported all four dayparts "2 of 2 used" with no plan in
+existence. Eligibility is a set (D7); a session lands in exactly one member. Occupancy
+is not knowable at goal-creation time, so the cap moved to the only place that knows:
+layout, keyed by `(date, daypart)`.
+
+Changed: `core/layout.ts` (occupancy map, enforced in **both** `retainValidExisting` and
+`placeRemaining`), `db/local/queries.ts` (`getDaypartCapacity` now reads `planSlots` and
+takes `now`), `features/goals/goals-list.tsx`.
+
+**Two things worth knowing before touching this again:**
+
+- **Retention enforces the cap too, and must.** A retained slot occupies its daypart
+  exactly as a fresh one does, so a cap checked only on placement is silently exceeded
+  by any week laid out before the cap was lowered. This is the D54 failure shape,
+  repeated — that bug was "enforced in `placeRemaining`, not in `retainValidExisting`".
+- **Retention is now scarcest-first, not map-insertion order.** Once the cap can drop a
+  retained slot, insertion order becomes observable, and `existing` is not guaranteed
+  sorted by the caller. A test asserts the result is identical when `existing` is passed
+  reversed.
+
+`getDaypartCapacity` returns two numbers instead of one — `usedToday` and `freeDays` —
+because one cannot answer "can I start another goal in the evening?": a daypart can be
+full tonight and open four other days. Renders as *"Evening: 2 of 2 today · room on 6 of
+7 days"*.
+
+**Verified:** lint, **184 tests** (+7), build. Four of the seven new layout tests were
+checked to fail with enforcement disabled. Then on real data in-browser: forced a
+relayout with 6 active stages against `activeCap: 2`, got 12 slots over the 3 remaining
+days with **zero `(date, daypart)` over 2**, morning and evening sitting exactly at the
+cap, and the goals screen showing four *different* numbers where it previously showed
+four identical full ones.
+
+**Known gap, recorded in D60 rather than fixed:** `pace.cadenceStatus` computes
+feasibility from rest gaps and `maxPerWeek` and knows nothing about the cap, so a stage
+starved by a full daypart is under-placed without the check-in screen explaining why.
+
+### Found while verifying — a pulled goal is never scheduled
+
+**`relayoutWeek` is called from four UI sites** (goal form ×2, daypart settings,
+check-in) **and from nothing in `sync/`.** So a device that receives goals, stages or
+dayparts by pull keeps whatever plan it already had until the user happens to save
+something locally.
+
+Observed directly: this checkout pulled down 5 goals / 6 active stages and the plan
+still held **2 slots**, laid out when one goal existed. The phone will show the goals
+and an empty Today.
+
+Not fixed here because the fix is a layering decision, not a patch: `sync/` calling
+`features/plan/planner` inverts the dependency direction (sync is below features), and
+the alternatives — a callback injected at `configureSync`, or a UI-level effect watching
+`lastPullAt` — are different architectures with different owners. **Wants a decision,
+then roughly ten lines.** This is the highest-value item outstanding.
+
+### Triage of the remaining findings
+
+Grouped by root cause, not by report order. Groups A–C are independent of each other and
+of anything above — safe to hand to separate sessions.
+
+| Group | Findings | Root cause / note |
+|---|---|---|
+| **A · Copy and vocabulary** | rename "cadence"; describe active cap; explain scope; drop the D-number from the UI; purpose field; daypart times on hover in the goal form | The goal form never explains itself. All text. **`goal-form.tsx:377` is the only user-visible D-number in the app** — the two others are in `/styleguide`, a dev page. |
+| **B · Numeric inputs** | session length wants h+m; "sessions per week" will not clear; check-in should ask h+m | One cause: `Math.max(1, Number(e.target.value))` coerces on **every keystroke**, so clearing the field snaps it back to 1. `maxPerWeek`/`minRestDays` already use the correct pattern (string state, coerce on submit). Wants a shared `DurationInput` + `NumberInput` — the input-side twin of `formatDuration`. |
+| **C · Navigation and lists** | set goal state from the goals list; click through to a goal from the check-in rows; "Load more" showing with nothing to load | `hasMore` starts `true` and only clears once a bounded scan comes back empty, so it always renders at least once. Also here: the **"New goal" button logs a Base UI accessibility error** — `<Button render={<Link/>}>` needs `nativeButton={false}`. Pre-existing. |
+| **D · Protocol coherence** | weekly max and min rest days "mismatch" cadence | Real, not cosmetic: `layout.ts:54` does `required = Math.min(required, maxPerWeek)`, so **weekly max silently overrides the stated cadence** — 5×/week with a max of 3 schedules 3, with nothing said. D20 intended it as a recovery ceiling for *voluntary catch-up*, not a scheduling input. Needs a decision before code. |
+| **E · Capacity** | — | **Done, D60.** |
+| **F · Goal targets and structure** | goal-level target date → suggested sessions/week; GATE → subjects → chapters; configurable week start | Largest. See below. |
+
+### Notes on group F, so it is not restarted from scratch
+
+- **The target-date item does not need AI.** It was reported as *"with ai suggest
+  sessions per week"*, but **D19** (compute the required rate backwards, budget-first)
+  and **D25** (the required line is pure arithmetic, ships day one, needs zero data)
+  already specify it as division. D39 defers AI to v2; this is not AI work, and treating
+  it as such is what has kept it unbuilt.
+- **The hierarchy item is D18/D23**, already designed: GATE → syllabus → revision → test
+  series, with **D24** deriving each stage's deadline backwards. The schema has a real
+  `stages` table; only the UI assumes one stage per goal.
+- **But "GATE → subjects → chapters" mixes two axes.** D18's stages are *sequential
+  phases*; subjects are *parallel* divisions; chapters already exist as scope units
+  (`scopeUnitLabel`/`scopeUnitTotal`). Building three nesting levels would contradict
+  D12 and D23. Settle the axis before writing code.
+- **Week start is hardcoded Monday** in `core/dateUtils.ts` (`isoWeekStart`), and both
+  `pace.ts` and the new `getDaypartCapacity` depend on it. Making it configurable is a
+  settings field plus a threaded parameter through the pure core — small, but it belongs
+  to whoever is already in that file.
+
+---
+
+## App icon and loading mark (D61) — on `feature/dart-icon`, not yet merged
+
+The app icon and the check-in view's loading state are now a **dart and dartboard**,
+carried over from `task-shot 2.0`'s `src/components/Loading.tsx`. Board is
+`accent-fill`, dart is `ink` — two tones, no red (§2.3). Static mark and animated loop
+share one set of coordinates in `src/components/dart-mark.tsx` (`DartMark`,
+`DartLoader`), so the loop's resting frame and the generated icon files are provably the
+same drawing.
+
+**This amended `design.md` §6.1/§6.2 and added D61**, agreed with the user in-session:
+infinite CSS animation is now allowed when it's declarative and compositor-only
+(`opacity`/`transform`, no JS driving it) — the "nothing infinite" rule was protecting
+against a JS-driven main-thread loop, not against looping per se. Shimmer/pulsing
+dots/parallax stay banned on the separate §1 "must not pull attention" grounds. Read
+D61 for the full reasoning before touching §6.1 again.
+
+**What changed:**
+- `src/components/dart-mark.tsx` — new. `DartMark` (static) and `DartLoader` (the
+  infinite loop), sharing geometry constants.
+- `src/app/globals.css` — the loop's `@keyframes` and a `prefers-reduced-motion`
+  override more specific than the file's existing blanket collapse (that blanket rule
+  would otherwise land the reduced-motion state on the loop's fully-faded frame).
+- `src/features/checkin/checkin-view.tsx` — added a `dataReady` signal (a fourth,
+  narrower `useLiveQuery` alongside the existing `dayparts`/`activeGoals` ones, since
+  those already default to `[]` and can't distinguish "loading" from "loaded empty")
+  and a loading branch that renders `<DartLoader>` before first paint of real data.
+- `public/icons/*.png` and `src/app/favicon.ico` — regenerated from the new mark, via a
+  throwaway Node script (not committed — built on `zlib` only, no rasteriser dependency
+  per D50) that shares the same coordinates as `dart-mark.tsx`.
+- `docs/design.md` §6.1, §6.2, §6.3 — amended per D61.
+- `docs/DECISIONS.md` — D61 added.
+
+**Verified:** lint clean, all 184 tests pass (includes the in-flight, uncommitted
+`layout.ts`/`queries.ts`/`layout.test.ts` changes already on `main` when this branch was
+cut — untouched, carried along), production build clean. Generated PNGs viewed directly
+and match the approved design — rings, sharp-tipped dart, correct colours at both 512px
+and 192px. The app itself loads without console errors with the new import wired in.
+
+**Not independently re-verified in a live browser:** the actual in-app loading frame.
+Local Dexie/IndexedDB reads resolve fast enough that two attempts at screenshotting the
+real check-in page during first load both landed after `dataReady` had already flipped
+true — the loader never appeared in the capture window. The CSS itself (identical
+keyframes and geometry) was interactively confirmed to animate correctly in an earlier
+Artifact iteration; what's unconfirmed is only the live DOM mount, not the animation
+mechanism.
+
+**Not yet done:** nothing committed — branch `feature/dart-icon` has all of the above as
+working-tree changes only, alongside the pre-existing uncommitted daypart-cap work. Next
+session (or later this one): decide whether to commit dart-icon and the daypart-cap fix
+separately or together, then open the PR.
