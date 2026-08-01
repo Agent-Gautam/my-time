@@ -47,7 +47,9 @@ async function withGoalNames(
 export default function MissedPage() {
   const [rows, setRows] = useState<MissedRow[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(true);
+  // `false` until the first page comes back: "we haven't looked yet" must not
+  // render as "there is more" (the button showing before any scan has run).
+  const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [started, setStarted] = useState(false);
   const goalNameCache = useRef(new Map<string, string>());

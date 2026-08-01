@@ -13,6 +13,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useLiveQuery } from "dexie-react-hooks";
 import { Plus } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -23,8 +24,11 @@ import {
   getGoalsWithStage,
   type DaypartCapacity,
 } from "@/db/local/queries";
+import { putGoal } from "@/db/local/mutations";
+import { relayoutWeek } from "@/features/plan/planner";
 import { localNow } from "@/lib/daypart";
 import { formatDuration } from "@/lib/duration";
+import type { LocalGoal } from "@/db/local/schema";
 
 const TIER_LABEL: Record<number, string> = {
   1: "Critical",
@@ -54,8 +58,30 @@ export function GoalsList() {
     () => getGoalsWithStage({ states: ["active", "planned"] }),
     [],
   );
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const capacityByDaypart = new Map((capacity ?? []).map((c) => [c.daypartId, c]));
+
+  // Manual promotion only (D31) — this never fires on its own, and it never
+  // suggests capacity is something to fill (D21). "dropped" isn't reachable here;
+  // that's a destructive action that stays behind the edit form (D48).
+  async function toggleGoalState(goal: LocalGoal, e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (togglingId) return;
+    setTogglingId(goal.id);
+    try {
+      // Fresh read for the write (D53) — distinct from the mount-time `now` above,
+      // which only drives the read-only capacity summary.
+      const actionNow = localNow();
+      const nextState = goal.state === "planned" ? "active" : "planned";
+      await putGoal({ ...goal, state: nextState }, actionNow);
+      await relayoutWeek({ now: actionNow });
+      toast.success(nextState === "active" ? "Goal moved to active." : "Goal moved to planned.");
+    } finally {
+      setTogglingId(null);
+    }
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -113,9 +139,19 @@ export function GoalsList() {
                       >
                         {goal.name}
                       </span>
-                      <Badge variant={goal.state === "planned" ? "outline" : "secondary"}>
-                        {goal.state === "planned" ? "Planned" : "Active"}
-                      </Badge>
+                      <div className="flex items-center gap-1.5">
+                        <Badge variant={goal.state === "planned" ? "outline" : "secondary"}>
+                          {goal.state === "planned" ? "Planned" : "Active"}
+                        </Badge>
+                        <Button
+                          variant="outline"
+                          size="xs"
+                          disabled={togglingId === goal.id}
+                          onClick={(e) => toggleGoalState(goal, e)}
+                        >
+                          {goal.state === "planned" ? "Move to active" : "Move to planned"}
+                        </Button>
+                      </div>
                     </div>
                     <span className="text-label text-text-subtle">
                       {TIER_LABEL[goal.tier] ?? "Normal"}

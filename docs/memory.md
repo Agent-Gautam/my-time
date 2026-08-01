@@ -1676,3 +1676,62 @@ so that re-plan came from the engine. Both runs quiescent, so the loop trap was 
   two-device rig there is: separate origins, separate IndexedDB, one server. Worth reusing.
   Note other worktrees hold ports in the 3000–3003 range; check before assuming a port is
   yours.
+
+---
+
+## Session — 2026-07-31 · W3: "Load more" over-render + list-level goal promotion
+
+Worktree `my-time-lists` / branch `ui/lists-pagination`, off `origin/main`. Owned:
+`app/missed/page.tsx`, `goal-detail/session-history.tsx`, `checkin/lib.ts`,
+`goals-list.tsx`.
+
+### 1. "Load more" appeared before any scan had run
+
+Not a bug in the bounded-scan logic itself — `missedOccurrencesPage` (checkin/lib.ts)
+and `sessionHistoryPage` (goal-detail/lib.ts, unowned, left untouched) already
+correctly distinguish "the retention window / underlying table is exhausted" from
+"this click's bound (`WEEKS_PER_MISSED_SCAN` / `MAX_UNDERLYING_PAGES_PER_SCAN`) was
+hit with more left to look at" — both report `hasMore` from the former, not the
+latter, which is the right signal.
+
+The actual defect was in the two consuming components: `hasMore` was seeded
+`useState(true)`, so on the very first render — before the mount effect's
+`loadMore()` had resolved — the button rendered regardless of whether there would
+turn out to be anything at all. Reseeded both to `useState(false)`: "haven't looked
+yet" no longer reads as "there is more." First load still fires unconditionally from
+the mount effect; the button now only appears once a page actually reports more to
+fetch.
+
+### 2. Goal state (planned ⇄ active) toggle from the list
+
+Added a small outline button per goal card in `goals-list.tsx` ("Move to active" /
+"Move to planned"), `e.preventDefault()`/`stopPropagation()` so it doesn't trigger
+the card's own `Link` navigation. Calls the existing `putGoal` mutation directly
+(spread the `LocalGoal`, flip `state`) + `relayoutWeek`, same pattern `goal-form.tsx`
+already uses — no new mutation added. Toast on success, disabled per-goal while
+in flight via a single `togglingId` string.
+
+Deliberately **excludes** `dropped` — that stays a destructive action behind the
+edit form (D48) and never appears as a casual toggle next to the others. No
+capacity check gates the click: D60's daypart-cap enforcement lives in the
+scheduler itself, so an over-capacity promotion is accepted here and simply won't
+get slots at layout time — consistent with D21 (capacity is a ceiling reported
+after the fact, never a target enforced before the fact). Rebased onto `main`
+after D60 landed (this track started before it merged) — kept D60's capacity
+section (`describeCapacity`, `usedToday`/`activeCap`/`freeDays`) entirely as-is and
+re-applied only the toggle on top; renamed the toggle handler's own `localNow()`
+read to `actionNow` so it doesn't shadow the component's mount-time `now`.
+
+### Gates
+
+`lint`, `test`, `build` all clean (197 tests, current `main` baseline). Dev server
+verified serving `/goals` (curl 200, HTML renders); could **not** complete an
+in-browser click-through — the only available browser tool (Playwright MCP)
+reported its Chrome profile already locked by another instance for the whole
+session, and the `claude-in-chrome` extension wasn't connected. Logic was traced
+by hand instead: both `hasMore` seeds confirmed to gate on the real first-page
+result, and the toggle handler confirmed to write through the same
+`putGoal`/`relayoutWeek` path the edit form already uses. **A real browser
+click-through (empty `/missed`, populated `/missed` and session history, and a
+live promote/demote click) is still owed** before this should be treated as fully
+verified.

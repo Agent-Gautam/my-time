@@ -14,7 +14,9 @@ import { sessionHistoryPage, type SessionHistoryCursor } from "./lib";
 export function SessionHistory({ stageId }: { stageId: string }) {
   const [logs, setLogs] = useState<LocalSessionLog[]>([]);
   const [cursor, setCursor] = useState<SessionHistoryCursor | null>(null);
-  const [hasMore, setHasMore] = useState(true);
+  // `false` until the first page comes back: "we haven't looked yet" must not
+  // render as "there is more" (the button showing before any scan has run).
+  const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [started, setStarted] = useState(false);
   const initialLoadStarted = useRef(false);
