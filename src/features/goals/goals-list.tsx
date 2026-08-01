@@ -109,7 +109,11 @@ export function GoalsList() {
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <h2 className="text-section font-semibold text-text">Goals</h2>
-          <Button size="sm" render={<Link href="/goals/new" />}>
+          {/* `nativeButton={false}` because this renders an <a>, not a <button>.
+              Without it Base UI logs an accessibility error on every render — it
+              cannot know the element is a link unless told, and it assumes button
+              semantics it is then not providing. */}
+          <Button size="sm" nativeButton={false} render={<Link href="/goals/new" />}>
             <Plus />
             New goal
           </Button>
