@@ -1785,3 +1785,189 @@ result, and the toggle handler confirmed to write through the same
 click-through (empty `/missed`, populated `/missed` and session history, and a
 live promote/demote click) is still owed** before this should be treated as fully
 verified.
+
+---
+
+## Session — 2026-08-01 · Design session: group F settled (D65, D66, D67)
+
+**No feature code written.** This session existed to close the three items triaged as
+group F ("goal targets and structure"), which had been sitting because each needed a
+decision before anyone could write a line. All three are now recorded in
+`DECISIONS.md` as **D65 · D66 · D67**, and this section is the implementation plan
+that follows from them. Everything below is **proposed and unbuilt.**
+
+The ground had moved since group F was scoped — D60 (cap enforced in `layoutWeek`),
+D62 (re-plan after a pull) and D63 (Today opens on the plan, PRD §6.5 rewritten) all
+landed in between, and two of the three items changed shape because of it.
+
+### D65 — target date → required rate. It is division, not AI
+
+**The report's framing is refuted, and the refutation is the point.** Reported as
+*"with AI, suggest sessions per week"*; D19 (compute backwards, budget-first) and D25
+(the required line is pure arithmetic, day one, zero data) already specify it, and D39
+defers AI to v2. Calling it AI work put it behind a wall it was never on the wrong side
+of, which is why it is still unbuilt.
+
+The real gap was an input inventory, not a technique. Three rungs, each needing one
+more input: **units/week** (scope + date — day one, always shows) → **sessions/week**
+(+ an effort-per-unit figure) → **hours/week** (+ the time-box). Rung 2 is the one
+actually asked for and it is wanted **at goal creation**, where no checkpoint exists —
+so `sessionsPerUnit` gets an optional user prior, which D17 already sanctions verbatim.
+Measured wins as soon as it exists; the two are never blended.
+
+**Work, in dependency order:**
+
+1. **`core/pace.ts`** — `ScopeStatus` gains `requiredUnitsPerWeek` and
+   `requiredSessionsPerWeek: number | null`, and **`requiredPerUnit` is renamed
+   `allowedSessionsPerUnit`.** That rename is not cosmetic: the value is
+   `sessionsAvailableInRange ÷ remainingUnits`, i.e. the budget the *current cadence*
+   gives each unit, and `pace-summary.tsx:54` renders it as *"to reach the target"* —
+   a ceiling presented as a bar to clear. `ScopeStatus` is in `core/pace.ts`, **not**
+   the frozen `core/types.ts`, so this is in bounds. Unit tests required (CLAUDE.md:
+   any change to `pace` needs them), including the null branch — no prior, no
+   checkpoint, rung 2 absent.
+2. **`core/types.ts` — PROPOSED, DO NOT EDIT WITHOUT AGREEMENT.**
+   `Stage.estimatedSessionsPerUnit: number | null`. This is the one frozen-file change
+   in the whole session. If review declines it, rungs 1 and 3 still ship and rung 2
+   waits for the first checkpoint — a real loss exactly when the number is most useful.
+3. **Migration** — `stages.estimated_sessions_per_unit integer` (nullable). **Number it
+   by build order, not by this list**: if D67 ships first (recommended below) this is
+   `0004`, not `0003`. If both are built together, one migration carrying both columns
+   is fine and preferable. See the migration note at the bottom of this section before
+   running `db:generate`.
+4. **Sync mapping for the new column** — `db/server/schema.ts`, `LocalStage`,
+   `WireStage`, and both halves of `route.ts` (the `stages` put-apply and the `stages`
+   pull-select). No Dexie version bump: the field is not indexed.
+5. **`goal-form.tsx`** — move target date **out of the scope block** to the goal level;
+   it currently sits at line ~423 as a sub-field of "how many chapters". Add the
+   optional prior next to the scope count. A date with no scope shows *"14 weeks left"*
+   and nothing else.
+6. **`goal-detail/pace-summary.tsx`** — render the ladder; state the missing rung in
+   words rather than filling it. Rung 2 is a comparison (*"your cadence gives 3/week;
+   this needs 4.2"*), never an instruction, never red (D15, D3) — and it **names its
+   source** (*"at your estimate of 2/chapter"* vs *"at your measured 6.7, from 3
+   checkpoints"*). That attribution is the D57 clause in D65: rung 2 from one checkpoint
+   is a point on n = 1 data, and the count stated beside it is what keeps it honest.
+   The widening band stays on the projection, not on the rate.
+7. **`PRD.md` §6.7** — the `[v1]` line *"Scope-based required line — hours-per-unit
+   against a target date"* is the mis-named value D65 corrects; replace it with the
+   rung ladder. The `[later]` line below it — day-one budget breakdown for **staged**
+   goals (D19) — **stays `[later]`**: D65 is the single-stage case, not a promotion of
+   that item.
+
+**No column moves to `goals`.** `stages.target_date` stays put — moving it is the
+reshape D51 forbids, and D24 needs it per-stage. Every v1 goal has one implicit stage,
+so the goal's date *is* that row today; under multi-stage it becomes the final stage's
+authored date with earlier ones derived backwards via the existing `deadline_derived`
+flag. **D56 is unaffected** — its checkpoint gate already requires both scope and date.
+
+### D66 — the hierarchy: no third level, and no subjects table
+
+Settles the axis and **builds nothing.** "GATE → subjects → chapters" mixes sequential
+phases (stages — already modelled), parallel divisions (subjects — not modelled and not
+to be), and a count that is not a container at all (chapters — already
+`scopeUnitLabel`/`scopeUnitTotal`).
+
+Subjects are refused on D12 (a subject level is per-item content tracking wearing a
+container), D27 (its only real payoff is scope-cut advice, which is declined
+*"entirely"*), and shape (parallel stages contradict `sortOrder` + `state`, which encode
+one-at-a-time, and D24's backwards chain). The two supported expressions both already
+work: **one goal per subject** when the protocols genuinely differ — which does *not*
+explode, since D60's cap is `(date, daypart)` so subjects rotate in by staleness; the
+honest cost is N list entries and no single scope number — or **chapters as scope units
+across the whole goal**, which is the default.
+
+**One thing to carry forward, or it gets rediscovered as a bug:** `layout.ts` filters
+`stages.filter(s => s.state === "active")` and *nothing enforces one active stage per
+goal.* Two active stages on one goal schedule in parallel today. D18/D23's sequential
+semantics are recorded, not enforced. Whoever builds the multi-stage UI owns that
+invariant, and it belongs in `layoutWeek` or the stage-advance mutation — not in a form.
+
+Multi-stage stays `[later]` (PRD §6.3). D66 does not promote it; it fixes the shape it
+will have so the next reader of "GATE → subjects → chapters" does not start over.
+
+### D67 — configurable week start. Small, except for one thing
+
+The small part: `isoWeekStart(date, weekStartsOn)` with the day as a **required**
+parameter (a `"mon"` default would let call sites go unconverted and still compile).
+**Six call sites** — one more than when this was first scoped, because D60 added
+`getDaypartCapacity`:
+
+| File | Site |
+|---|---|
+| `core/pace.ts:23` | `cadenceStatus` — **the only file inside `core/` that gains an argument** |
+| `features/plan/planner.ts:99` | `relayoutWeek` default `weekStart` |
+| `features/plan/planner.ts:224` | `reconcileNow` |
+| `db/local/queries.ts:152` | `getDaypartCapacity` (added by D60) |
+| `features/checkin/lib.ts:90` | voluntary-catch-up candidates |
+| `features/checkin/lib.ts:275` | `currentWeekStart` |
+
+`core/score.ts` is already clean — it takes `windowStart`/`windowEnd` as parameters. D42
+purity is untouched: this is a parameter, not a clock read. Non-core callers read the
+value through a new bounded `getWeekStartsOn()` in `db/local/queries.ts` (one row).
+
+**The not-small part: week start forks the plan.** `plan_weeks.id` is
+`week-<weekStart>` (D58) and D45 makes the week the atomic sync unit, so two devices
+disagreeing produce **two week rows, neither of which loses an LWW race**, each device
+reading its own. Consequences, all mandatory:
+
+- **Home: `users.week_starts_on`, nullable, synced.** Additive under D51. `Weekday` is
+  already in the frozen types, so **item 3 needs no `core/types.ts` change.** The
+  column alone is not enough and the omission is the failure mode this decision is
+  about — an implementer who adds it without the plumbing gets a setting that does not
+  sync, which *is* the fork. Full list: migration (`0003` if D67 ships first),
+  `db/server/schema.ts`, `LocalUser`, `WireUser`, both halves of `route.ts` (the `users`
+  put-apply and the `users` pull-select), **`putUser`'s signature** — it takes
+  `{ id, email }` today — a settings mutation to write it, and `getWeekStartsOn()` in
+  `queries.ts` to read it. No Dexie version bump: not indexed.
+- **`applyPull` must count it.** `sync/pull.ts:100` is
+  `inputsChanged: dayparts + goals + stages > 0`, and `users` is applied on line 78,
+  deliberately outside that count. Left alone, a *pulled* week-start change re-keys the
+  week without re-planning: Today reads the new id, finds nothing, goes blank, reports
+  nothing — D62's bug shape exactly. Loop-safe by D62's own test: `applyMutable` counts
+  only rows it wrote, and relayout never writes `users`.
+- **Changing it locally re-lays out immediately**, like a daypart edit (D44).
+
+Three one-time costs, accepted: the cadence window shifts once (a Sunday session may
+move in or out of "this week" — a recompute reported calmly, D15, and no logged fact is
+touched); the remaining week reshuffles once (`layoutWeek` filters `existing` by
+`slot.weekStart === weekStart`, so nothing is retained and D32 has nothing to prefer);
+and the old `plan_weeks` row is **orphaned and left**. Verified: `replacePlanWeek` only
+touches the named week, nothing derives the old id afterwards, and
+`route.ts:applyDelete` acks `planWeeks` without acting — a delete path would be a change
+to D45's atomic-week model to reclaim one inert row.
+
+**`PRD.md` §6.8** gains a week-start bullet alongside daypart boundaries and the
+per-daypart cap, in the same change (D63's precedent: docs move with the code).
+
+**Default is Monday, not first-open day — declined for a concrete reason.**
+`seedIfEmpty` runs on first paint before any pull can arrive and writes `local-user`
+through `putUser`, which enqueues. A second device therefore seeds *its* first-open
+weekday, wins LWW by being later, and silently re-cuts the week on the first device —
+the exact fork D67 exists to prevent, arriving through the door marked convenience.
+There is no race-free way to seed a user-scoped default offline-first. `null` means
+Monday; the picker is one tap. **Flagged for review** — this is the one place the plan
+declines the ask as literally stated.
+
+### Migration note for whoever runs `db:generate`
+
+`0002` is **hand-edited** and regenerating it blindly reintroduces a silent failure
+(D58, and the Pre-Wave-3 section above). It is safe to generate anything **after** it —
+`0003`, `0004`, or one migration carrying both new columns — **only** because
+`drizzle/meta/0002_snapshot.json` already carries the post-edit types — verified this
+session: `users.id`, `dayparts.id`/`user_id`, `plan_weeks.id`/`user_id`,
+`plan_slots.id`/`plan_week_id`/`daypart_id` are all `text`, and
+`stages.eligible_dayparts` is `text[]`. So a diff against it emits only `ADD COLUMN`.
+Still: **read the generated SQL before applying** (it must contain nothing but the two
+`ALTER TABLE ... ADD COLUMN`s), and **check `drizzle.__drizzle_migrations` afterwards** —
+`db:migrate` can print success and exit 0 having done nothing.
+
+### Suggested sequencing
+
+D67 first — it is self-contained, it is the one with a live correctness bug behind it
+(the two-device plan fork), and it touches `pace.ts` in a way D65 also does. Then D65,
+which is the largest and the most user-visible. D66 is already complete as a decision
+and unblocks nothing until multi-stage is scheduled.
+
+`core/types.ts` needs **one** proposed change across all three (D65's prior). D67 and
+D66 need none.

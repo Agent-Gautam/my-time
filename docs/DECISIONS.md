@@ -1124,6 +1124,221 @@ use; the fix is one more counter in `applyPull`.
 
 ---
 
+### D65 — The required rate is a three-rung ladder of division, and the app climbs only as far as its inputs reach
+
+**Proposed. Not yet built.**
+
+Reported as *"with AI, suggest sessions per week."* **Refuted.** There is no inference
+here. D19 already specifies computing the rate backwards, budget-first; D25 already
+says the required line is pure arithmetic that exists on day one and needs zero data.
+D39 defers AI to v2, so labelling this AI work moved it behind a wall it was never on
+the wrong side of — and that is the whole reason it is still unbuilt. It is division.
+
+What has actually been missing is not a technique but an **input inventory**. The
+required rate is not one number; it is three, each needing one more input than the
+last, and the failure mode is stating a rung the inputs do not support:
+
+| Rung | Arithmetic | Needs | Available |
+|---|---|---|---|
+| **1 · units/week** | `remainingUnits ÷ weeksLeft` | scope total + target date | **day one, zero data** |
+| **2 · sessions/week** | rung 1 `× sessionsPerUnit` | \+ an effort figure per unit | prior at creation, or first checkpoint |
+| **3 · hours/week** | rung 2 `× sessionMinutes ÷ 60` | \+ the time-box (always set) | wherever rung 2 is |
+
+**Rung 1 always shows. Rung 2 shows only when a real `sessionsPerUnit` exists, and the
+app never invents one** — that is D25's actual content, and the gap is stated in words
+(*"how long a chapter takes isn't known yet"*), not filled with a plausible number.
+
+Rung 2 is the one the user asked for, and it is wanted **at goal creation**, which is
+precisely when no checkpoint exists. Measurement (D17, D57) arrives too late to help
+choose a cadence. So `sessionsPerUnit` gets a second source: **an optional
+user-supplied prior on the stage**, which D17 already sanctions in those words — *"an
+optional rough upfront estimate may serve as a starting prior, superseded by
+measurement as soon as enough data exists."* Measured always wins once it exists; the
+prior is never blended with it and never retro-fitted.
+
+That prior is the **one schema change in this decision**: a nullable
+`stages.estimated_sessions_per_unit`. Additive under D51 (new nullable column on an
+existing table), and it requires a change to the frozen `core/types.ts`, which is
+proposed here rather than made (Phases.md). *If review would rather not touch the
+frozen file, cutting the prior leaves rungs 1 and 3 intact and defers rung 2 to the
+first checkpoint — a real product loss at exactly the moment the number is most useful,
+and the reason for the recommendation.*
+
+**Rung 2 names its source, and that is what carries the honesty.** Sourced from
+measurement it is `requiredUnitsPerWeek × measuredPerUnit`, and on one checkpoint
+`measuredPerUnit` is `doneSessions ÷ latestValue` at n = 1 — the same thin data D57
+allows the projection to ship on, but arriving as a **point**, with none of the band
+that made D57 defensible. D57 names this exact failure: a narrow render on thin data is
+a real D25 violation.
+
+Resolved by **attribution rather than a second uncertainty model**: the figure is always
+stated with where it came from — *"at your estimate of 2 sessions/chapter"* against *"at
+your measured 6.7, from 3 checkpoints"*. The reader can see how much to trust it, the
+count is right there, and nothing is invented. Giving rung 2 its own widening band was
+considered and rejected: it would be a second confidence mechanism, tuned by a second
+coefficient, saying what the checkpoint count already says. **The band stays on the
+projection, which is where a range means something — a finish date.** A rate is
+attributed; a date is bracketed.
+
+**Rung 2 is a comparison, never a verdict.** It reads *"your cadence gives 3 sessions a
+week; this target needs 4.2"* and stops. It does not tell the user to change the
+cadence, it never colours red, and when the target has become unreachable it says so
+plainly and offers to reduce or extend — D15 verbatim. And it is stated about the
+protocol, never the outcome (D3): *"behind on sessions"*, never *"behind on passing."*
+
+**The target date is a goal-level date, and needs no column to become one.**
+`stages.target_date` stays exactly where it is — moving it to `goals` is the reshape
+D51 forbids, and D24 needs it per-stage anyway. Every v1 goal has one implicit stage
+(D23), so for v1 the goal's date *is* that row. When multi-stage lands, the goal's date
+is the **final stage's** authored date and every earlier stage's is derived backwards
+from it, flagged by the `deadline_derived` column that already exists for this. What
+changes now is only the UI: **target date is asked at the goal level, independently of
+scope**, instead of sitting inside the scope block as a sub-field of "how many
+chapters". A date with no scope yields *"14 weeks left"* and nothing more — no rung is
+reachable, and the app says nothing further rather than manufacturing a line.
+
+**D56 is untouched.** Its checkpoint gate is `scopeUnitTotal != null && targetDate !=
+null`, which stays exactly right when a date can exist alone: a dateless, scopeless gym
+goal is still asked nothing.
+
+**One honesty defect this exposed, fixed in the same change.**
+`ScopeStatus.requiredPerUnit` is not a requirement. It is
+`sessionsAvailableInRange ÷ remainingUnits` — the sessions the *current cadence*
+allows each unit, a budget ceiling. `pace-summary.tsx` renders it as *"N
+sessions/chapter **to reach the target**"*, which reads as a bar to clear when it is a
+budget not to exceed, and it is the D25 failure shape: a number stated with more
+authority than its derivation carries. Renamed to `allowedSessionsPerUnit`, with the
+rung-1 and rung-2 figures added alongside it. `ScopeStatus` lives in `core/pace.ts`,
+not the frozen `core/types.ts`, so this rename is in bounds.
+
+### D66 — The hierarchy axis is sequential phases. There is no third level, and subjects are not one
+
+**Proposed. Settles the axis; builds nothing.**
+
+Reported as *"GATE → subjects → chapters."* That is three levels, and it cannot be
+built as three because **it mixes two different axes with a thing that is not an axis
+at all**:
+
+| Reported level | What it actually is | Where it already lives |
+|---|---|---|
+| syllabus → revision → tests | **sequential phases** — one active at a time | `stages` (D18, D23), deadlines derived backwards (D24) |
+| subjects | **parallel divisions** — all live at once | nothing |
+| chapters | **scope units** — a count, not a container | `scope_unit_label` / `scope_unit_total` (D28) |
+
+Chapters are already modelled and are not a level: they are the number a checkpoint
+reports (D13). Stages are already modelled and *are* the axis. Subjects are the only
+genuinely new thing, and they are the one that must not be built.
+
+**The axis is sequential phases (stages). A goal is a sequence of stages, each holding
+a count. Nothing nests inside a stage.**
+
+Why subjects are refused, in order of weight:
+
+- **A subject level is per-item content tracking wearing a container.** D12 fixes a
+  time-box regardless of contents and CLAUDE.md forbids ever asking what was inside a
+  session. Per-subject progress means per-subject checkpoints, which means the coarse
+  single question of D13 becomes eight questions a week.
+- **Its only real payoff is scope-cut advice, which D27 declines.** Knowing you are
+  behind on Algorithms specifically is actionable only as *"drop something"*, and D27
+  states the size of the gap and stops — deliberately avoiding per-unit importance
+  metadata *"entirely"*, in those words.
+- **Parallel stages would silently break the sequence.** `sortOrder` plus
+  `state: pending | active | done` encodes one-at-a-time, and D24's backwards
+  derivation assumes a chain. Subjects-as-stages would be several `active` at once,
+  which is a different data shape sharing a table.
+
+**Two supported ways to express subjects, both already built:**
+
+1. **One goal per subject**, when the subjects genuinely differ in protocol and the
+   user wants them scheduled independently. This works and does not explode — D60's cap
+   is keyed to `(date, daypart)`, so with `activeCap: 2` two subjects surface per
+   daypart per day and the rest rotate in by staleness. The honest cost is *N entries
+   in the goals list and no single scope number for the whole exam*, not breakage.
+2. **Chapters as scope units across the whole goal**, which is the default and the
+   cheaper answer: one number, one weekly question, one required line.
+
+**Recorded because it will otherwise be rediscovered as a bug:** `layout.ts` filters
+`stages.filter(s => s.state === "active")` and nothing anywhere enforces that a goal
+has at most one active stage. The sequential semantics of D18/D23 are **recorded, not
+enforced** — two active stages on one goal schedule in parallel today, quietly. Whoever
+builds the multi-stage UI owns that invariant, and it belongs in `layoutWeek` or in the
+stage-advance mutation, not in a form.
+
+Multi-stage stays `[later]` (PRD §6.3). This decision does not promote it; it fixes the
+shape it will have when it lands, so that the next person to read *"GATE → subjects →
+chapters"* does not start over.
+
+### D67 — Week start is a synced setting threaded through the core, and it is a layout input
+
+**Proposed. Not yet built.**
+
+`isoWeekStart` hardcodes Monday. Making it configurable is a small change that touches
+one pure-core file and five callers — and it has one consequence that is not small.
+
+**It forks the plan.** `plan_weeks.id` is `week-<weekStart>` (D58), and D45 makes the
+week the atomic unit of plan sync. Two devices disagreeing about the week start
+therefore produce **two differently-named week rows, neither of which loses a
+last-write-wins race**, and each device reads its own via
+`getPlanSlotsForWeek(isoWeekStart(today))`. The plan silently forks across devices and
+D45's atomic-week guarantee is void. So:
+
+- **The setting is per user and synced. It is never per device**, and there is no
+  local-only variant of this field.
+- **It must be registered as a layout input in D62's `applyPull`.** `inputsChanged` is
+  currently `dayparts + goals + stages > 0`; `users` rows are applied on the line above
+  and deliberately excluded from that count. A pulled week-start change would therefore
+  re-key the week on device B *without* re-planning — Today reads the new id, finds
+  nothing, and goes blank with nothing reported. That is the D62 bug shape exactly, and
+  it is why "which table holds it" matters less than "the holder is counted." Adding
+  `users` to the counter is loop-safe on D62's own test: `applyMutable` counts only
+  rows it actually wrote, and relayout never writes `users`, so nothing it does can
+  re-raise the flag.
+- **Changing it locally re-lays out immediately**, the same as a daypart boundary edit
+  (D44). Inputs changed; regenerate (D32).
+
+**Home: a nullable `users.week_starts_on`.** A new nullable column on an existing table
+is additive (D51); `users` is already synced, already LWW, already has exactly one row,
+and week start is a user preference rather than a new entity. `Weekday` already exists
+in the frozen `core/types.ts`, so **this item needs no change to the frozen file.**
+
+**Default: Monday, changed explicitly in settings** — `null` means Monday. The ask was
+*"default to the day the user first opened the app"*, and it is declined for a concrete
+reason rather than a stylistic one: **there is no race-free way to seed a user-scoped
+default on an offline-first second device.** `seedIfEmpty` runs on first paint, before
+any pull can arrive, and writes `local-user` through `putUser`, which enqueues. So the
+Android device seeds *its* first-open weekday, wins LWW on the shared row by virtue of
+being later, and silently re-cuts the week on the desktop — the exact fork this decision
+exists to prevent, arriving through the door marked "convenience". A guessed default
+that can move on its own is worse than a boring one the user picks once. Monday is one
+tap from anything else, and D41's two devices make this a live case, not a hypothetical.
+
+**Threading.** `isoWeekStart(date, weekStartsOn)` takes the day as a **required**
+parameter, not one defaulting to `"mon"` — a default would let call sites go unconverted
+and compile. Six call sites: `core/pace.ts` (`cadenceStatus`), `features/plan/planner.ts`
+×2, `db/local/queries.ts` (`getDaypartCapacity` — D60 added this one, and it is why the
+list is longer than it was when this was first scoped), `features/checkin/lib.ts` ×2.
+`core/score.ts` is already clean: it takes `windowStart`/`windowEnd` as parameters, so
+**`pace.ts` is the only file inside `core/` that gains an argument** and D42's purity is
+untouched — this is a parameter, not a clock read.
+
+Three costs, all accepted and all one-time:
+
+- **The cadence window shifts under the user once.** *"4×/week, you've done 2"* is
+  recomputed against different boundaries, so a session logged last Sunday may move into
+  or out of "this week". That is a recompute reported calmly (D15), not a fault, and it
+  never touches a logged fact.
+- **The remaining week reshuffles once.** `layoutWeek` filters `existing` by
+  `slot.weekStart === weekStart`, so after a boundary change nothing is retained and
+  D32's churn preference has nothing to prefer. Unavoidable: the old placements belong
+  to a week that no longer exists.
+- **The old `plan_weeks` row is orphaned and stays.** Nothing derives its id any more,
+  so it is unreadable rather than wrong. It is deliberately not deleted: `applyDelete`
+  acks `planWeeks` without acting — the plan is replaced wholesale, never deleted
+  piecemeal (D45) — so a delete path would be a change to the atomic-week model to
+  reclaim one row. Left inert.
+
+---
+
 ## Open questions
 
 - ~~O1 — Planning horizon~~ → resolved by **D16**.
