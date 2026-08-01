@@ -3,6 +3,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { getOutboxDepth } from "@/db/local/queries";
+import { relayoutWeek } from "@/features/plan/planner";
 import {
   getServerSyncEngineSnapshot,
   getSyncEngineSnapshot,
@@ -82,8 +83,13 @@ export function useSyncStatus(): SyncStatusData {
 
   const pendingCount = useLiveQuery(() => getOutboxDepth(), [], 0);
 
+  // Also the composition root for re-planning after a pull (D62). `sync/` sits below
+  // `features/` and so cannot import `relayoutWeek` itself; this hook is already the
+  // one place that starts the engine, and it is on the UI side of the seam, so it is
+  // where the two get introduced. `startSync` remains idempotent — passing the
+  // function again on a remount just re-registers the same thing.
   useEffect(() => {
-    startSync();
+    startSync((now) => relayoutWeek({ now }));
   }, []);
 
   // `blocked` sits just under `offline`: while offline, "your writes are queuing

@@ -8,11 +8,17 @@
 import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { localDb } from "@/db/local/schema";
+import { localDb, type LocalGoal } from "@/db/local/schema";
 import { enqueue, getOutboxDepth } from "@/db/local/queries";
-import { configureSync, getSyncEngineSnapshot, syncNow } from "@/sync/engine";
+import { putGoal } from "@/db/local/mutations";
+import {
+  configureSync,
+  getSyncEngineSnapshot,
+  syncNow,
+  type RelayoutAfterPull,
+} from "@/sync/engine";
 import { createMemoryMemoStore } from "@/sync/memo";
-import { emptyPulledRows, type SyncRequest } from "@/sync/protocol";
+import { emptyPulledRows, type PulledRows, type SyncRequest } from "@/sync/protocol";
 import { SyncTransportError, type SyncTransport } from "@/sync/transport";
 
 const NOW = "2026-07-30T10:00:00";
@@ -62,6 +68,245 @@ async function queue(count: number, prefix = "goal") {
 beforeEach(async () => {
   await reset();
   install(acceptAll().transport);
+});
+
+// ---------------------------------------------------------------------------
+// Re-planning after a pull (D62)
+// ---------------------------------------------------------------------------
+
+/** A server that hands over `rows` on the first round only, then goes quiet. */
+function serves(rows: Partial<PulledRows>): SyncTransport {
+  let served = false;
+  return async (request) => {
+    const pulled = served ? emptyPulledRows() : { ...emptyPulledRows(), ...rows };
+    served = true;
+    return {
+      applied: request.changes.map((change) => change.seq),
+      rejected: [],
+      pulled,
+      cursors: {},
+      hasMore: false,
+      serverTime: "x",
+    };
+  };
+}
+
+function remoteGoal(over: Partial<LocalGoal> = {}): LocalGoal {
+  return {
+    id: "goal-remote",
+    name: "Gym",
+    purpose: "fitness",
+    tier: 1,
+    state: "active",
+    updatedAt: NOW,
+    deletedAt: null,
+    ...over,
+  };
+}
+
+/** Records every relayout the engine asks for, so tests can count them. */
+function spyRelayout(): { hook: RelayoutAfterPull; calls: string[] } {
+  const calls: string[] = [];
+  return {
+    calls,
+    hook: async (now) => {
+      calls.push(now);
+    },
+  };
+}
+
+describe("re-planning after a pull (D62)", () => {
+  it("re-plans when a pull brings down a goal — the bug this exists for", async () => {
+    // A device that receives someone else's goals kept whatever plan it already had:
+    // the goals appeared and Today stayed empty, because nothing outside the four
+    // editing screens ever called `relayoutWeek`.
+    const { hook, calls } = spyRelayout();
+    configureSync({
+      transport: serves({ goals: [remoteGoal()] }),
+      memo: createMemoryMemoStore(),
+      now: () => NOW,
+      batchSize: 3,
+      onSchedulingInputsChanged: hook,
+    });
+
+    await syncNow();
+
+    // Called with the engine's clock, not one of its own (D53).
+    expect(calls).toEqual([NOW]);
+  });
+
+  it("does not re-plan when the pull was empty", async () => {
+    const { hook, calls } = spyRelayout();
+    configureSync({
+      transport: acceptAll().transport,
+      memo: createMemoryMemoStore(),
+      now: () => NOW,
+      batchSize: 3,
+      onSchedulingInputsChanged: hook,
+    });
+    await queue(2);
+
+    await syncNow();
+
+    expect(calls).toEqual([]);
+  });
+
+  it("does not re-plan for session logs alone (D62's named exclusion)", async () => {
+    const { hook, calls } = spyRelayout();
+    configureSync({
+      transport: serves({
+        sessionLogs: [
+          {
+            id: "log-1",
+            stageId: "stage-1",
+            date: "2026-07-30",
+            daypartId: "daypart-morning",
+            minutes: 30,
+            status: "done",
+            source: "planned",
+            loggedAt: NOW,
+          },
+        ],
+      }),
+      memo: createMemoryMemoStore(),
+      now: () => NOW,
+      batchSize: 3,
+      onSchedulingInputsChanged: hook,
+    });
+
+    await syncNow();
+
+    expect(calls).toEqual([]);
+    expect(await localDb.sessionLogs.count()).toBe(1); // it did arrive
+  });
+
+  it("does not re-plan on an incoming plan week — that is layout's output, not its input", async () => {
+    // The loop guard. If applying a week counted as an input change, two devices
+    // would re-plan each other's plans forever.
+    const { hook, calls } = spyRelayout();
+    configureSync({
+      transport: serves({
+        planWeeks: [
+          {
+            week: {
+              id: "week-2026-07-27",
+              weekStart: "2026-07-27",
+              version: 3,
+              updatedAt: NOW,
+            },
+            slots: [],
+          },
+        ],
+      }),
+      memo: createMemoryMemoStore(),
+      now: () => NOW,
+      batchSize: 3,
+      onSchedulingInputsChanged: hook,
+    });
+
+    const outcome = await syncNow();
+
+    expect(outcome.weeksApplied).toBe(1); // the week really was applied
+    expect(calls).toEqual([]);
+  });
+
+  it("does not re-plan for a goal that lost the LWW race — nothing was written", async () => {
+    await putGoal(
+      { id: "goal-remote", name: "Lifting", purpose: "fitness", tier: 1, state: "active" },
+      "2026-07-30T11:00:00",
+    );
+    const { hook, calls } = spyRelayout();
+    configureSync({
+      transport: serves({ goals: [remoteGoal({ updatedAt: "2026-07-30T09:00:00" })] }),
+      memo: createMemoryMemoStore(),
+      now: () => NOW,
+      batchSize: 3,
+      onSchedulingInputsChanged: hook,
+    });
+
+    await syncNow();
+
+    expect(calls).toEqual([]);
+    expect((await localDb.goals.get("goal-remote"))!.name).toBe("Lifting");
+  });
+
+  it("re-plans once per run, not once per round", async () => {
+    // Four queued rows at batchSize 3 is two rounds; the goal arrives in the first.
+    const { hook, calls } = spyRelayout();
+    configureSync({
+      transport: serves({ goals: [remoteGoal()] }),
+      memo: createMemoryMemoStore(),
+      now: () => NOW,
+      batchSize: 3,
+      onSchedulingInputsChanged: hook,
+    });
+    await queue(4);
+
+    await syncNow();
+
+    expect(calls).toHaveLength(1);
+  });
+
+  it("re-plans exactly once across runs — a second sync does not re-plan", async () => {
+    // What keeps the write-trigger from becoming a loop: the outbox row the relayout
+    // leaves behind causes one more sync, and that sync pulls nothing new.
+    const { hook, calls } = spyRelayout();
+    configureSync({
+      transport: serves({ goals: [remoteGoal()] }),
+      memo: createMemoryMemoStore(),
+      now: () => NOW,
+      batchSize: 3,
+      onSchedulingInputsChanged: hook,
+    });
+
+    await syncNow();
+    await syncNow();
+    await syncNow();
+
+    expect(calls).toHaveLength(1);
+  });
+
+  it("retries on the next run when the relayout itself throws", async () => {
+    // The debt outlives the failed attempt: no second pull is coming to re-raise it,
+    // because the rows are already in the mirror.
+    let failNext = true;
+    const calls: string[] = [];
+    configureSync({
+      transport: serves({ goals: [remoteGoal()] }),
+      memo: createMemoryMemoStore(),
+      now: () => NOW,
+      batchSize: 3,
+      onSchedulingInputsChanged: async (now) => {
+        if (failNext) {
+          failNext = false;
+          throw new Error("layout blew up");
+        }
+        calls.push(now);
+      },
+    });
+
+    const first = await syncNow();
+    expect(first.error).toBe("layout blew up");
+    expect(calls).toEqual([]);
+
+    await syncNow();
+
+    expect(calls).toEqual([NOW]);
+  });
+
+  it("does not wedge when no relayout was ever registered", async () => {
+    // `configureSync` without the hook is most of the existing suite.
+    configureSync({
+      transport: serves({ goals: [remoteGoal()] }),
+      memo: createMemoryMemoStore(),
+      now: () => NOW,
+      batchSize: 3,
+    });
+
+    const outcome = await syncNow();
+
+    expect(outcome.error).toBeNull();
+  });
 });
 
 describe("a successful run", () => {

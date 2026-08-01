@@ -56,15 +56,33 @@ export interface ApplyOutcome {
   applied: number;
   /** Weeks swapped wholesale. */
   weeksApplied: number;
+  /**
+   * This pull wrote a row that `layoutWeek` reads as an **input**: a daypart, a goal
+   * or a stage. The engine re-plans on it (D62), so it is deliberately narrower than
+   * `applied > 0`:
+   *
+   *   - `users` and `pushSubscriptions` are not scheduling inputs at all.
+   *   - `planWeeks` are layout's *output*. Re-planning on them would have the two
+   *     devices recompute each other's plans forever.
+   *   - `sessionLogs` are excluded by decision, not by oversight — see D62.
+   *
+   * "Wrote", not "received": a page that lost every LWW race changed nothing, and the
+   * server re-sends an overlap on every pull by design.
+   */
+  inputsChanged: boolean;
 }
 
 export async function applyPull(pulled: PulledRows): Promise<ApplyOutcome> {
   let applied = 0;
 
   applied += await applyMutable(localDb.users, pulled.users);
-  applied += await applyMutable(localDb.dayparts, pulled.dayparts as LocalDaypart[]);
-  applied += await applyMutable(localDb.goals, pulled.goals as LocalGoal[]);
-  applied += await applyMutable(localDb.stages, pulled.stages as LocalStage[]);
+
+  // Counted apart from the rest, because these three are what layout reads.
+  const dayparts = await applyMutable(localDb.dayparts, pulled.dayparts as LocalDaypart[]);
+  const goals = await applyMutable(localDb.goals, pulled.goals as LocalGoal[]);
+  const stages = await applyMutable(localDb.stages, pulled.stages as LocalStage[]);
+  applied += dayparts + goals + stages;
+
   applied += await applyMutable(localDb.pushSubscriptions, pulled.pushSubscriptions);
 
   applied += await applyAppendOnly(localDb.sessionLogs, pulled.sessionLogs);
@@ -76,7 +94,11 @@ export async function applyPull(pulled: PulledRows): Promise<ApplyOutcome> {
     if (await applyPlanWeek(bundle)) weeksApplied += 1;
   }
 
-  return { applied: applied + weeksApplied, weeksApplied };
+  return {
+    applied: applied + weeksApplied,
+    weeksApplied,
+    inputsChanged: dayparts + goals + stages > 0,
+  };
 }
 
 // ---------------------------------------------------------------------------
