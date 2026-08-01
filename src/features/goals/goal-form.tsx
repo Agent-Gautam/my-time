@@ -33,6 +33,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { NumberField } from "@/components/number-field";
+import { DurationField } from "@/components/duration-field";
 
 import { getDayparts } from "@/db/local/queries";
 import { newId, putGoalWithStage, dropGoal } from "@/db/local/mutations";
@@ -257,19 +264,17 @@ export function GoalForm({ existing }: GoalFormProps) {
         <h2 className="text-section font-semibold text-text">Protocol</h2>
 
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="goal-session-minutes">Session length (minutes)</Label>
-          <Input
-            id="goal-session-minutes"
-            type="number"
-            min={1}
-            className="w-24"
+          <Label htmlFor="goal-session-hours">Session length</Label>
+          <DurationField
+            idPrefix="goal-session"
             value={sessionMinutes}
-            onChange={(e) => setSessionMinutes(Math.max(1, Number(e.target.value)))}
+            onChange={setSessionMinutes}
+            min={1}
           />
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <Label>Cadence</Label>
+          <Label>How often</Label>
           <RadioGroup
             value={cadenceType}
             onValueChange={(v) => setCadenceType(v as CadenceType)}
@@ -293,13 +298,12 @@ export function GoalForm({ existing }: GoalFormProps) {
         {cadenceType !== "fixed_days" ? (
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="goal-cadence-count">Sessions per week</Label>
-            <Input
+            <NumberField
               id="goal-cadence-count"
-              type="number"
               min={1}
               className="w-24"
               value={cadenceCount}
-              onChange={(e) => setCadenceCount(Math.max(1, Number(e.target.value)))}
+              onChange={setCadenceCount}
             />
           </div>
         ) : null}
@@ -328,16 +332,25 @@ export function GoalForm({ existing }: GoalFormProps) {
           <Label>Eligible dayparts</Label>
           <div className="flex flex-wrap gap-3">
             {(dayparts ?? []).map((daypart) => (
-              <div key={daypart.id} className="flex items-center gap-1.5">
-                <Checkbox
-                  id={`daypart-${daypart.id}`}
-                  checked={eligibleDayparts.includes(daypart.id)}
-                  onCheckedChange={() => toggleDaypart(daypart.id)}
+              <Tooltip key={daypart.id}>
+                <TooltipTrigger
+                  render={
+                    <div className="flex items-center gap-1.5">
+                      <Checkbox
+                        id={`daypart-${daypart.id}`}
+                        checked={eligibleDayparts.includes(daypart.id)}
+                        onCheckedChange={() => toggleDaypart(daypart.id)}
+                      />
+                      <Label htmlFor={`daypart-${daypart.id}`} className="capitalize">
+                        {daypart.name}
+                      </Label>
+                    </div>
+                  }
                 />
-                <Label htmlFor={`daypart-${daypart.id}`} className="capitalize">
-                  {daypart.name}
-                </Label>
-              </div>
+                <TooltipContent>
+                  {daypart.startTime}–{daypart.endTime}
+                </TooltipContent>
+              </Tooltip>
             ))}
           </div>
         </div>
@@ -374,8 +387,10 @@ export function GoalForm({ existing }: GoalFormProps) {
             Scope (optional)
           </h2>
           <p className="text-label text-text-subtle">
-            Adds a target-date line alongside the cadence line (D28). Leave blank
-            for a cadence-only goal.
+            For goals with a countable amount of work — chapters to read, kg to
+            gain, lessons to finish. Set a unit and a total, and the app tracks
+            progress toward it alongside your cadence. Leave blank for a
+            cadence-only goal with no fixed endpoint.
           </p>
         </div>
         <div className="flex flex-col gap-4 sm:flex-row">

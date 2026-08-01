@@ -1676,3 +1676,53 @@ so that re-plan came from the engine. Both runs quiescent, so the loop trap was 
   two-device rig there is: separate origins, separate IndexedDB, one server. Worth reusing.
   Note other worktrees hold ports in the 3000–3003 range; check before assuming a port is
   yours.
+
+---
+
+## W2 — Goal form: copy + numeric inputs (`ui/goal-form`)
+
+Owned files only: `src/features/goals/goal-form.tsx`, `src/features/settings/daypart-settings.tsx`,
+new shared components under `src/components/`.
+
+**Numeric input bug fixed.** `Math.max(1, Number(e.target.value))` on every keystroke made
+cleared fields snap back before the user could retype — hit "Session length" and "Sessions
+per week". Built two shared components that hold local string state while focused and only
+coerce (clamp, default) on blur:
+
+- `src/components/number-field.tsx` — plain number input, `value`/`onChange` in numbers.
+- `src/components/duration-field.tsx` — hours + minutes pair, combines to total minutes.
+  Used for session length since sessions are often 1h+ and a bare minutes field is tedious
+  to type ("90").
+
+Both use React's adjust-during-render pattern (`if (value !== prevValue) setPrevValue(...)`)
+to resync from external prop changes (e.g. loading a different goal to edit) — a `useEffect`
+doing the same setState is flagged by the `react-hooks/set-state-in-effect` ESLint rule
+already wired into this repo's lint config.
+
+**Copy fixes**, all per the session brief:
+- "Cadence" → "How often".
+- "Scope (optional)" now explains what scope *is* in plain language (countable work toward
+  a total, alongside cadence) instead of just citing D28.
+- Removed the literal "(D28)" from user-facing text — D-numbers belong in commits/comments,
+  never in UI copy. The two references left in `/styleguide` are a dev-only page and were
+  explicitly out of scope.
+- Eligible-dayparts checkboxes now show each daypart's start–end time in a tooltip on hover
+  (`@base-ui/react` `Tooltip`, already a dependency — no new package).
+- daypart-settings "Active cap" now has a one-line description under the input ("Max goals
+  scheduled into this daypart at once").
+
+**One layout regression caught in testing:** the new Active-cap caption text, added inside
+an unconstrained flex child, was wide enough to squeeze the sibling "Name" field down to
+~39px in a browser check (Playwright, since the Claude-in-Chrome extension wasn't connected
+this session). Fixed by giving that column a fixed `w-32`. Worth remembering if adding
+caption text to any other flex-row settings field: unconstrained text width competes with
+flex-1 siblings that have `min-w-0` (the shared `Input` component sets this itself).
+
+**Verified in-browser** (Playwright, both themes via `localStorage['my-time:theme-mode']`):
+clearing and retyping every touched numeric field works with no snap-back; editing an
+existing goal (DSA, 1h/5×week) correctly populates the duration/number fields on load: the
+resync path works, not just the create-form defaults. `npm run lint`, `npm run test` (177
+passed), and `npm run build` all green on the worktree.
+
+**Pre-existing, not touched:** a Base UI "expected a native `<button>`" console warning
+from `goals-list.tsx` (not an owned file) — noted, not fixed, out of scope.
