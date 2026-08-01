@@ -84,7 +84,7 @@ function DaypartRow({ daypart }: { daypart: LocalDaypart }) {
             onChange={(e) => setEndTime(e.target.value)}
           />
         </div>
-        <div className="flex flex-col gap-1.5">
+        <div className="flex w-32 flex-col gap-1.5">
           <Label htmlFor={`${daypart.id}-cap`}>Active cap</Label>
           <Input
             id={`${daypart.id}-cap`}
@@ -94,6 +94,9 @@ function DaypartRow({ daypart }: { daypart: LocalDaypart }) {
             value={activeCap}
             onChange={(e) => setActiveCap(e.target.value)}
           />
+          <p className="text-label text-text-subtle">
+            Max goals scheduled into this daypart at once.
+          </p>
         </div>
         <Button
           size="sm"
