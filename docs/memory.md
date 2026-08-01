@@ -1842,3 +1842,11 @@ commit before the fix (5-placement, max-of-zero erasure, feasibility) and green 
 validation and the new recovery copy have only been type-checked and built — a
 click-through of `/goals/new` (set 5×/week + a max of 3, confirm the error; set a
 valid max, confirm it saves) is still owed.
+
+**Follow-up in the same branch:** the Weekly max input briefly carried
+`min={weeklyCadence}`. Wrong, and worth remembering why — the form has no
+`noValidate`, so a native range underflow blocks `submit` before `handleSubmit` runs
+and `validate()` never fires. The browser's generic bubble would have replaced D64's
+one explanatory sentence on exactly the stored rows the decision exists to explain (an
+existing max of 3 under a cadence of 5; a legacy 0). `min` is back to 0 and the message
+is `validate()`'s job, which is how the rest of this form already works.

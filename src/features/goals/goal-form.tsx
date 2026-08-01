@@ -383,10 +383,16 @@ export function GoalForm({ existing }: GoalFormProps) {
           <div className="flex flex-col gap-4 sm:flex-row">
             <div className="flex flex-1 flex-col gap-1.5">
               <Label htmlFor="goal-max-per-week">Weekly max</Label>
+              {/* `min` stays at 0, not `weeklyCadence`. The form has no `noValidate`,
+                  so a native range underflow blocks `submit` outright and `validate()`
+                  never runs — the browser's own bubble would replace the one sentence
+                  this change exists to say, and it would fire on exactly the stored
+                  rows D64 is there to explain (an existing max of 3 under a cadence of
+                  5, or a legacy 0). The message is `validate()`'s job. */}
               <Input
                 id="goal-max-per-week"
                 type="number"
-                min={weeklyCadence}
+                min={0}
                 value={maxPerWeek}
                 onChange={(e) => setMaxPerWeek(e.target.value)}
                 placeholder="No hard ceiling"
