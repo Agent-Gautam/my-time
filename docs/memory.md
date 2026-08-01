@@ -1971,3 +1971,68 @@ and unblocks nothing until multi-stage is scheduled.
 
 `core/types.ts` needs **one** proposed change across all three (D65's prior). D67 and
 D66 need none.
+
+---
+
+## W5 — Weekly max stopped overriding the cadence (D64), on `fix/cadence-coherence`
+
+Fixes the "weekly max and min rest days are useless, they totally mismatch" report.
+It was real: `layout.ts:98` did `required = Math.min(required, stage.maxPerWeek)`, so
+5×/week under a max of 3 planned 3 and said nothing. A max of `0` was storable and
+planned nothing at all — the goal disappeared from the plan with no error.
+
+**Decision recorded as D64** (cites D20, D26, D14, D21). The weekly max is a ceiling
+on the week's *total* — scheduled plus voluntary catch-up — and never an input to the
+plan. Option (a) of the two on the table, taken with teeth rather than as a relabel.
+
+Three code changes, and they only work together:
+
+- **`core/layout.ts`** — the `Math.min` is gone; the plan places the stated cadence.
+- **`core/pace.ts`** — `isFeasible` no longer reads `maxPerWeek` either, and lost its
+  `doneInWindow` parameter with it. Worth keeping the derivation to hand: the clause
+  was `doneInWindow + requiredRemaining > maxPerWeek`, but `requiredRemaining === 0`
+  returns true one line above, so every call reaching it has `doneInWindow < required`
+  and the sum is *exactly* `required`. It reduced to `required > maxPerWeek` — zero
+  information about progress, a config check reported as "not reachable this week".
+  The two silent behaviours pointed **opposite ways on the same data**: layout shrank
+  the week, pace declared it unreachable. Fixing one alone just moves which surface
+  lies.
+- **`features/goals/goal-form.tsx`** — refuses a max below the cadence (`weeklyCadence`
+  derived the same way `handleSubmit` derives the stored `cadenceCount`, so fixed-days
+  can't drift), and the two fields now carry copy saying what they are: *ceilings for
+  catch-up, not a second cadence*.
+
+The ceiling is untouched where it belongs — `checkin/lib.ts:voluntaryCandidates`
+already withholds a stage once the week's done count reaches it, which is what
+Architecture.md §9.3 has said all along. Legacy rows that contradict themselves get a
+defined behaviour, not a migration: plan honours the cadence, stale ceiling inerts
+catch-up only, next edit of the goal surfaces the error that heals it.
+
+**`minRestDays` deliberately untouched** — it is a real scheduling constraint
+(`respectsRest` honours it) and an over-tight gap already shows as `feasible: false`.
+**The D60 gap is still open and explicitly restated** in the `isFeasible` docblock and
+in D64: `cadenceStatus(stage, history, now)` still can't see the daypart cap, because
+that needs the plan and dayparts it doesn't take. Not quietly dropped while editing
+the very function the note is about.
+
+### Gates
+
+`lint`, `test`, `build` all clean. **200 tests** (197 baseline − 2 replaced + 5).
+Two tests asserted the removed behaviour and were replaced in place, each with a
+comment naming what it replaced: `layout.test.ts` "caps total placements at
+max_per_week…" and `pace.test.ts` "respects maxPerWeek as a hard ceiling on
+feasibility…". The three new failing-first tests were confirmed red on the base
+commit before the fix (5-placement, max-of-zero erasure, feasibility) and green after.
+
+**Not browser-verified.** The core change is covered by unit tests, but the form
+validation and the new recovery copy have only been type-checked and built — a
+click-through of `/goals/new` (set 5×/week + a max of 3, confirm the error; set a
+valid max, confirm it saves) is still owed.
+
+**Follow-up in the same branch:** the Weekly max input briefly carried
+`min={weeklyCadence}`. Wrong, and worth remembering why — the form has no
+`noValidate`, so a native range underflow blocks `submit` before `handleSubmit` runs
+and `validate()` never fires. The browser's generic bubble would have replaced D64's
+one explanatory sentence on exactly the stored rows the decision exists to explain (an
+existing max of 3 under a cadence of 5; a legacy 0). `min` is back to 0 and the message
+is `validate()`'s job, which is how the rest of this form already works.

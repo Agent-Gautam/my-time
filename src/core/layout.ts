@@ -94,8 +94,13 @@ export function layoutWeek(input: {
     const doneDates = stageHistory.filter((h) => h.status === "done").map((h) => h.date);
     const doneThisWeek = doneDates.filter((d) => diffDays(d, weekStart) >= 0 && diffDays(d, weekEnd) <= 0).length;
 
-    let required = requiredSessionsInWindow(stage, weekStart, weekEnd);
-    if (stage.maxPerWeek != null) required = Math.min(required, stage.maxPerWeek);
+    // `maxPerWeek` is deliberately not read here (D64). It is a ceiling on the week's
+    // *total* — planned plus voluntary catch-up (D20) — not an input to the plan. This
+    // line used to be `required = Math.min(required, stage.maxPerWeek)`, which silently
+    // overrode the stated cadence: 5×/week under a max of 3 planned 3, and a max of 0
+    // planned nothing at all, with no explanation on any screen. The plan places the
+    // cadence the user stated (D26); the ceiling is enforced where catch-up is offered.
+    const required = requiredSessionsInWindow(stage, weekStart, weekEnd);
 
     plans.set(stage.id, {
       stage,

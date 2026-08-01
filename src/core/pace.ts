@@ -11,7 +11,7 @@ import { SCHEDULER_CONSTANTS } from "./constants";
 export interface CadenceStatus {
   requiredPerDay: number; // sessions/day needed for the remainder of this week's window
   actualPerDay: number; // measured sessions/day since the stage's first logged session
-  feasible: boolean; // can requiredPerDay still be met given rest/recovery constraints (D20)
+  feasible: boolean; // can requiredPerDay still be met in the days and rest gaps left (D20, D64)
 }
 
 /**
@@ -39,19 +39,34 @@ export function cadenceStatus(stage: Stage, history: readonly SessionLog[], now:
     actualPerDay = doneDates.length / elapsed;
   }
 
-  const feasible = isFeasible(stage, requiredRemaining, daysRemaining, doneInWindow);
+  const feasible = isFeasible(stage, requiredRemaining, daysRemaining);
 
   return { requiredPerDay, actualPerDay, feasible };
 }
 
-function isFeasible(stage: Stage, requiredRemaining: number, daysRemaining: number, doneInWindow: number): boolean {
+/**
+ * Feasibility is about the days and the rest gaps left in the window, and nothing else.
+ *
+ * `maxPerWeek` used to appear here as
+ * `doneInWindow + requiredRemaining > stage.maxPerWeek`. It never said anything about
+ * actual progress: the `requiredRemaining === 0` early return means any call that gets
+ * past it has `doneInWindow < required`, so `doneInWindow + requiredRemaining` is
+ * *exactly* `required` and the clause reduced to `required > maxPerWeek` — a check on
+ * whether the stage's own two numbers contradict each other, reported through the
+ * feasibility channel as "not reachable this week". D64 rejects that contradiction at
+ * the form instead, so the clause is gone and `doneInWindow` went with it.
+ *
+ * The D60 gap is still open and is not this: `cadenceStatus` takes `(stage, history,
+ * now)` and so cannot see the daypart cap, which needs the plan and the dayparts. A
+ * stage starved by a full daypart is still under-placed with nothing said here.
+ */
+function isFeasible(stage: Stage, requiredRemaining: number, daysRemaining: number): boolean {
   if (requiredRemaining === 0) return true;
   if (requiredRemaining > daysRemaining) return false; // can't do 2 sessions in 1 day
   if (stage.minRestDays != null) {
     const maxPossible = Math.ceil(daysRemaining / (stage.minRestDays + 1));
     if (requiredRemaining > maxPossible) return false;
   }
-  if (stage.maxPerWeek != null && doneInWindow + requiredRemaining > stage.maxPerWeek) return false;
   return true;
 }
 
