@@ -1124,6 +1124,79 @@ use; the fix is one more counter in `applyPull`.
 
 ---
 
+### D64 — The weekly max is a ceiling on the week's total, not an input to the plan
+
+Reported from use: weekly max and min rest days *"are useless, they totally mismatch"*
+the cadence. Correct, and the model was the incoherent part, not the labels.
+
+`layout.ts` did `required = Math.min(required, stage.maxPerWeek)`. So **the weekly max
+silently overrode the stated cadence**: 5×/week under a max of 3 planned 3, with
+nothing on any screen saying why. At its worst it was worse than that — the form
+stored `Math.max(0, Number(...))`, so a max of `0` was reachable, `Math.min(required,
+0)` placed nothing, and the goal simply vanished from the plan.
+
+That was never what the field was for. D20 introduced it as a **recovery ceiling so
+that voluntary catch-up could not itself become harmful** — missing two sessions must
+not produce a 6-day training week. D26 lists it under "plus recovery constraints",
+separate from the three cadence shapes. The UI presented it as a peer of cadence, and
+peers that disagree read as a contradiction, which is exactly how it read.
+
+**Decision: the weekly max bounds the week's total — scheduled plus caught-up — and
+never the plan.** Three changes, and they have to be all three:
+
+- **`layout.ts` stops reading it.** The plan places the cadence the user stated (D26).
+  Nothing reduces it silently, which is the D14 requirement: a schedule that cannot
+  explain a number must not produce that number.
+- **`pace.isFeasible` stops reading it too**, and this is the part worth deriving
+  rather than asserting. The clause was `doneInWindow + requiredRemaining >
+  maxPerWeek`. But `requiredRemaining === 0` returns true one line earlier, so any
+  call reaching the clause has `doneInWindow < required`, making `doneInWindow +
+  requiredRemaining` *exactly* `required`. It reduced to `required > maxPerWeek` and
+  carried **no information about actual progress at all** — a config-validity check
+  wearing feasibility's clothes, announcing "not reachable this week" about a week
+  that was perfectly reachable. Deleting it is a correction, not a loss of cover;
+  `doneInWindow` becomes unused and goes with it.
+- **The form refuses a max below the cadence.** It is the user contradicting
+  themselves, and it is the only place both numbers are on screen together. This is
+  the same shape as the existing *"Required days can't outnumber the weekly cadence"*
+  check, which was already there and already right. The two fields also now say what
+  they do: *ceilings for catch-up, not a second cadence.*
+
+Note what those two silent behaviours were doing **in opposite directions on the same
+data**: layout quietly shrank the week to 3, while the check-in screen quietly called
+the same week unreachable. Fixing one and leaving the other would have swapped which
+surface lies.
+
+The ceiling itself is untouched and still enforced, in the one place it belongs —
+`checkin/lib.ts:voluntaryCandidates`, which already withholds a stage once the week's
+done count has reached it (Architecture.md §9.3, which described it this way all
+along). When it binds, the stage is simply not offered for catch-up, with nothing
+said. Under D21 an unexplained *absence* is the conservative direction — the app must
+never nag toward capacity — so that stays as it is.
+
+**Stored data that already contradicts itself** is left with a defined behaviour
+rather than a migration: the plan honours the stated cadence, the stale ceiling inerts
+catch-up only, and the next edit of that goal surfaces the validation error that heals
+it. `/api/sync` passes the column straight through and rows predating this exist, so
+the form guarantee is a UI-level one, not an invariant the core may assume.
+
+**`minRestDays` is deliberately not touched.** It is a genuine scheduling constraint —
+`layout.respectsRest` honours it when placing, and an over-tight gap already surfaces
+as `feasible: false` on the check-in screen rather than silently. It is a peer of
+cadence in a way the weekly max never was.
+
+**The D60 gap stays open, and this is not it.** `isFeasible` is the function D60's note
+is about, so it needs saying: `cadenceStatus(stage, history, now)` still cannot see the
+daypart cap, because that needs the plan and the dayparts, which are not its arguments.
+A stage starved by a full daypart is still under-placed with nothing said at check-in.
+
+Two tests asserted the removed behaviour and were replaced, not deleted quietly:
+`layout.test.ts` *"caps total placements at max_per_week even when cadenceCount asks
+for more"* and `pace.test.ts` *"respects maxPerWeek as a hard ceiling on feasibility"*.
+Five now cover the decision, including the max-of-zero erasure. 197 → 200.
+
+---
+
 ## Open questions
 
 - ~~O1 — Planning horizon~~ → resolved by **D16**.

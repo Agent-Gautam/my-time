@@ -131,6 +131,10 @@ export function GoalForm({ existing }: GoalFormProps) {
     );
   }
 
+  // What the stage actually asks for in a week. `handleSubmit` derives the stored
+  // `cadenceCount` the same way for fixed days, so the two can't drift apart.
+  const weeklyCadence = cadenceType === "fixed_days" ? cadenceDays.length : cadenceCount;
+
   function validate(): string | null {
     if (name.trim().length === 0) return "Name is required.";
     if (eligibleDayparts.length === 0) return "Pick at least one daypart.";
@@ -146,6 +150,17 @@ export function GoalForm({ existing }: GoalFormProps) {
       if (cadenceDays.length === 0) return "Pick at least one required day.";
       if (cadenceDays.length > cadenceCount) {
         return "Required days can't outnumber the weekly cadence.";
+      }
+    }
+    // D64. A weekly max below the cadence is the user contradicting themselves, and it
+    // used to be resolved silently in two opposite directions at once: layout cut the
+    // plan down to the max, while the check-in screen called the week unreachable.
+    // Refused here instead — the only place the two numbers are visible together.
+    if (maxPerWeek.trim() !== "") {
+      const max = Number(maxPerWeek);
+      if (!Number.isFinite(max) || max < 1) return "Weekly max must be at least 1.";
+      if (max < weeklyCadence) {
+        return `Weekly max can't be below the ${weeklyCadence}×/week cadence — it's a ceiling on catch-up, not a second cadence.`;
       }
     }
     return null;
@@ -355,28 +370,39 @@ export function GoalForm({ existing }: GoalFormProps) {
           </div>
         </div>
 
-        <div className="flex flex-col gap-4 sm:flex-row">
-          <div className="flex flex-1 flex-col gap-1.5">
-            <Label htmlFor="goal-max-per-week">Weekly max (optional)</Label>
-            <Input
-              id="goal-max-per-week"
-              type="number"
-              min={0}
-              value={maxPerWeek}
-              onChange={(e) => setMaxPerWeek(e.target.value)}
-              placeholder="No hard ceiling"
-            />
+        <div className="flex flex-col gap-4">
+          <div>
+            <h3 className="text-label font-semibold text-text">Recovery (optional)</h3>
+            <p className="text-label text-text-subtle">
+              Ceilings for catch-up, not a second cadence. The plan always schedules
+              the cadence above; these limit only what you add on top of it, so a
+              missed session can&apos;t turn into a six-day training week. Weekly max
+              counts the whole week together — scheduled and caught-up.
+            </p>
           </div>
-          <div className="flex flex-1 flex-col gap-1.5">
-            <Label htmlFor="goal-min-rest">Min rest days (optional)</Label>
-            <Input
-              id="goal-min-rest"
-              type="number"
-              min={0}
-              value={minRestDays}
-              onChange={(e) => setMinRestDays(e.target.value)}
-              placeholder="No minimum gap"
-            />
+          <div className="flex flex-col gap-4 sm:flex-row">
+            <div className="flex flex-1 flex-col gap-1.5">
+              <Label htmlFor="goal-max-per-week">Weekly max</Label>
+              <Input
+                id="goal-max-per-week"
+                type="number"
+                min={weeklyCadence}
+                value={maxPerWeek}
+                onChange={(e) => setMaxPerWeek(e.target.value)}
+                placeholder="No hard ceiling"
+              />
+            </div>
+            <div className="flex flex-1 flex-col gap-1.5">
+              <Label htmlFor="goal-min-rest">Min rest days</Label>
+              <Input
+                id="goal-min-rest"
+                type="number"
+                min={0}
+                value={minRestDays}
+                onChange={(e) => setMinRestDays(e.target.value)}
+                placeholder="No minimum gap"
+              />
+            </div>
           </div>
         </div>
       </div>

@@ -81,9 +81,21 @@ describe("cadenceStatus", () => {
     expect(status.feasible).toBe(false);
   });
 
-  it("respects maxPerWeek as a hard ceiling on feasibility (D20 recovery constraint)", () => {
+  // D64. This replaces "respects maxPerWeek as a hard ceiling on feasibility",
+  // which asserted the opposite. Feasibility is about the days and rest gaps left
+  // in the window. `maxPerWeek` bounds voluntary catch-up (D20) and is not a
+  // scheduling input, so it cannot make a stated cadence unreachable — the old
+  // clause reduced algebraically to `required > maxPerWeek`, a config-validity
+  // check reported through the feasibility channel.
+  it("maxPerWeek does not decide feasibility (D64)", () => {
     const stage = makeStage({ cadenceCount: 5, maxPerWeek: 3 });
     const status = cadenceStatus(stage, [], "2026-07-27T09:00:00.000Z");
+    expect(status.feasible).toBe(true); // 5 sessions, 7 days, no rest gap
+  });
+
+  it("still reports infeasible for the same stage once the days genuinely run out", () => {
+    const stage = makeStage({ cadenceCount: 5, maxPerWeek: 3 });
+    const status = cadenceStatus(stage, [], "2026-08-01T09:00:00.000Z"); // Sat, 2 days left
     expect(status.feasible).toBe(false);
   });
 });

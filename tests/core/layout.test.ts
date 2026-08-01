@@ -191,10 +191,30 @@ describe("layoutWeek — recovery constraints (D20)", () => {
     }
   });
 
-  it("caps total placements at max_per_week even when cadenceCount asks for more", () => {
+  // D64. This replaces "caps total placements at max_per_week even when cadenceCount
+  // asks for more", which asserted the opposite. `maxPerWeek` is a ceiling on the
+  // week's *total* — planned plus voluntary catch-up (D20) — not an input to the
+  // plan. The plan places the cadence the user stated (D26); nothing silently
+  // reduces it.
+  it("places the full stated cadence, and does not let max_per_week reduce it (D64)", () => {
     const st = stage({ cadenceCount: 5, maxPerWeek: 3 });
     const result = run({ stages: [st] });
+    expect(result.filter((s) => s.stageId === st.id)).toHaveLength(5);
+  });
+
+  // The worst shape of the same bug: `Math.min(required, 0)` placed nothing at all,
+  // so the goal vanished from the plan with no error anywhere.
+  it("a max_per_week of zero does not erase the stage from the plan (D64)", () => {
+    const st = stage({ cadenceCount: 3, maxPerWeek: 0 });
+    const result = run({ stages: [st] });
     expect(result.filter((s) => s.stageId === st.id)).toHaveLength(3);
+  });
+
+  it("a max_per_week at or above the cadence changes nothing", () => {
+    const st = stage({ cadenceCount: 3 });
+    const uncapped = run({ stages: [st] });
+    const capped = run({ stages: [stage({ cadenceCount: 3, maxPerWeek: 5 })] });
+    expect(capped).toEqual(uncapped);
   });
 });
 
