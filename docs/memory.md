@@ -1515,23 +1515,34 @@ default screen instead of behind a form.
   `putCheckIn`, the `checkIns` sync table. Renaming would reshape the schema, a frozen
   types file and the sync protocol at once (D51). **UI text only.**
 
-### Verified, and what is NOT
+### Verified
 
-`npm run lint`, **188 tests** (+4), `npm run build` all pass.
+`npm run lint`, **188 tests** (+4), `npm run build` — and, after merging, **197 tests**
+on `main`.
 
-**No browser verification happened.** Both automation paths failed at the same time —
-the Claude-in-Chrome extension reported "not connected", and Playwright MCP refused
-with *"Browser is already in use … use --isolated"*. The remaining Chrome processes were
-all the ordinary install, so killing them was not something to do unasked. The following
-are therefore **unproven** and should be the first thing anyone checks:
+Browser verification was blocked at first (Claude-in-Chrome "not connected" *and*
+Playwright MCP holding a profile lock, simultaneously) and was completed afterwards
+through **Playwright MCP** once the lock cleared. All six checks pass, **zero console
+errors or warnings** across the whole run:
 
-1. Tapping **Done** with no time ever stated — this is the exact path the old
-   `activeCheckIn` guard blocked, so it is the highest-risk claim in the change.
-2. **Adjust today** → state fewer minutes than planned → list re-packs and "Won't fit
-   today" appears with no action buttons.
-3. **Reload** → the stated time is still in effect.
-4. Opening Today outside any daypart → "Remaining" reads "—", not "0m".
-5. The night-daypart wrap after midnight (D53), which this seam has broken once before.
+1. **Today opens on the plan** — heading, "Adjust today", *"Night · ends 05:00"*,
+   *"1h planned · 7h 34m left"*, session cards. No form, no "Check in".
+2. **Done with no time ever stated** — the path the old `activeCheckIn` guard blocked.
+   Logged `done`/`planned` against the right date and daypart, and **no `checkIns` row
+   was written**, which is the point: logging no longer costs a check-in.
+3. **Adjust today → 20 minutes** (less than one 30m box) — gap line switched to *"20m
+   stated · 0m left"*, "Won't fit today" appeared, and the block contains **zero
+   buttons** (D27).
+4. **Reload** — still *"20m stated"*, still packed. The `check_ins` round-trip works.
+5. **"Show everything again"** — back to *"1h planned · 7h 32m left"*, won't-fit gone.
+   Re-opening the panel showed the field pre-filled with `20`, proving the keyed
+   remount fix; the button itself only appears when a time is stated.
+6. **Daypart outside `now`** (picked Morning while in Night) — "Remaining" reads **—**,
+   not "0m".
+
+Not exercised live: the night-daypart wrap across an actual midnight (D53). It is
+covered by `tests/features/planner.test.ts`'s existing anchor test, and every read and
+write on this screen keys off `daypartDate`, but no one has sat through 00:00 with it.
 
 ---
 
