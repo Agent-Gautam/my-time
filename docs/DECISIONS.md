@@ -1003,7 +1003,7 @@ rasteriser dependency added) sharing the same coordinates as the `DartMark` comp
 `src/components/dart-mark.tsx`, so the static mark, the loop's resting frame, and the
 icon files are provably the same drawing.
 
-### D62 — Today opens on the plan; stating your time is an explicit, occasional act
+### D63 — Today opens on the plan; stating your time is an explicit, occasional act
 
 Today was a gate. `CheckinView` rendered a form first, and the session list did not
 exist until the user typed a number and pressed "Check in" — `logSlot` even

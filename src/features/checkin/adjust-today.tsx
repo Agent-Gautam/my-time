@@ -1,7 +1,7 @@
 "use client";
 
 // "Adjust today" — the explicit, occasional act of telling the app how much time you
-// actually have (D62).
+// actually have (D63).
 //
 // This is what used to be the check-in form, and it shows exactly what that form
 // showed: the detected daypart with a correction, D8's four numbers, and the minutes

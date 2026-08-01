@@ -1469,7 +1469,7 @@ of anything above — safe to hand to separate sessions.
 
 ---
 
-## Session — 2026-07-31 (3) · Today opens on the plan (D62)
+## Session — 2026-07-31 (3) · Today opens on the plan (D63)
 
 Branch `ui/today-first`, off a `main` that now has D60 and D61 merged (both were
 verified green together before branching: lint, 184 tests, build).
@@ -1477,7 +1477,7 @@ verified green together before branching: lint, 184 tests, build).
 **Today was a gate.** The session list did not exist until the user typed a number and
 pressed "Check in", and `logSlot` early-returned unless a check-in was active. Now Today
 shows the sessions the plan put in the current daypart, and stating available time is an
-explicit panel called **"Adjust today"**. Recorded as **D62**; `PRD.md` §5 and §6.5 and
+explicit panel called **"Adjust today"**. Recorded as **D63**; `PRD.md` §5 and §6.5 and
 `Architecture.md` §9.2 updated in the same change, as CLAUDE.md requires.
 
 **D8 is not contradicted and the decision says so explicitly** — the plan is still laid

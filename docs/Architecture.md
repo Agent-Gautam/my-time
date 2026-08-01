@@ -346,7 +346,7 @@ open app
   → session_logs appended; outbox queued; layout regenerates future slots only
 ```
 
-**"Adjust today" is a detour off that line, not a step on it** (D62). It writes a
+**"Adjust today" is a detour off that line, not a step on it** (D63). It writes a
 `check_ins` row and re-runs the same `reconcileNow` with a real number, which is what
 puts anything into "won't fit":
 

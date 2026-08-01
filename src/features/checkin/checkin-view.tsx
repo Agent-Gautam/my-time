@@ -5,7 +5,7 @@
 //   -> one tap per session logs it -> relayoutWeek regenerates future slots -> the
 //   on-track summary, calmly.
 //
-// **Opening Today costs nothing (D62).** This screen used to be a gate: a form
+// **Opening Today costs nothing (D63).** This screen used to be a gate: a form
 // rendered first, and the session list did not exist until the user typed a number
 // and pressed "Check in". Stating available time is now the explicit, occasional act
 // of `<AdjustToday />`, for the days that are not ordinary. D8 is unchanged — the plan
@@ -179,7 +179,7 @@ export function CheckinView() {
   };
 
   // No longer gated on a check-in existing: logging a planned session is the whole
-  // point of the screen and must work the moment it renders (D62).
+  // point of the screen and must work the moment it renders (D63).
   const logSlot = async (slot: ReconciledSlot, status: "done" | "skipped") => {
     if (!selectedDaypart) return;
 

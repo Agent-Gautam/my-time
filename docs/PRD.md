@@ -102,10 +102,10 @@ of the underlying content (D12). DSA is 60 minutes whether the video ran 22 minu
 40. ±10 minutes is acceptable drift.
 
 **Check-in** — the user states how much time they actually have, and the plan is
-reconciled against it. **Optional and occasional, not the way in** (D62): opening the
+reconciled against it. **Optional and occasional, not the way in** (D63): opening the
 app shows the daypart's planned sessions straight away. On screen it is called
 *"Adjust today"*; *check-in* remains the name of the stored fact and of the
-`check_ins` record. (D8, D62)
+`check_ins` record. (D8, D63)
 
 **Active cap** — the maximum number of goals that may be active in a given daypart,
 set by the user in settings. Goals beyond it wait in a **future/planned** state. (D11)
@@ -173,7 +173,7 @@ Deferred items are **designed, not dropped** — see §8 and D29.
 
 ### 6.5 Today, and check-in
 
-**Opening the app costs nothing** (D62). Today detects the current daypart and shows
+**Opening the app costs nothing** (D63). Today detects the current daypart and shows
 the sessions the plan already put there — no form, no gate.
 
 - **[v1]** Detects the current daypart and **states** it; the user may correct it.

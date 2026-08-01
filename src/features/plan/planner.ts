@@ -187,7 +187,7 @@ export interface ReconciledSlot {
  * full re-layout after reconciling is explicitly `[later]` (PRD §6.4), and D32 says
  * recompute from inputs, never patch an output. Nothing here writes.
  *
- * **`availableMinutes: null` means "no limit stated"** — Today's default since D62,
+ * **`availableMinutes: null` means "no limit stated"** — Today's default since D63,
  * where the screen opens on the proposed list and stating a time is an explicit,
  * occasional action. Everything is returned in `keep` and `dropped` is empty.
  *
