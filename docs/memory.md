@@ -1544,6 +1544,22 @@ Not exercised live: the night-daypart wrap across an actual midnight (D53). It i
 covered by `tests/features/planner.test.ts`'s existing anchor test, and every read and
 write on this screen keys off `daypartDate`, but no one has sat through 00:00 with it.
 
+**Follow-up, done once `ui/goal-form` landed:** the panel now uses W2's shared
+`DurationField` (hours + minutes) instead of a raw minutes box — the last outstanding
+piece of the cancelled check-in-screen track. Verified live: 1h 30m stores as `90`, and
+the gap line reads *"1h 30m stated · 1h left"* against 30m already logged.
+
+One thing that changed with it, and is a deliberate choice rather than a port:
+`DurationField` always holds a number, so there is no "empty" state to disable the
+primary button on the way the old free-text field had. Seeding at **0** would mean
+opening the panel to look at it, pressing "Pack the list", and watching every session
+fall into "won't fit" — the app concluding the user has no time because they never said
+otherwise. It seeds from the minutes actually left in the daypart instead (or the
+daypart's length when `now` is outside it), which is a number already on screen in the
+stat row. `min={0}` is passed explicitly, overriding the component's default of 1,
+because "no time at all" is a legitimate answer *here* while a zero-length session
+never is.
+
 ---
 
 ## App icon and loading mark (D61) — on `feature/dart-icon`, not yet merged

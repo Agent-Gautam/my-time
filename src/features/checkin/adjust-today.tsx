@@ -17,7 +17,7 @@
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { DurationField } from "@/components/duration-field";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -78,14 +78,25 @@ export function AdjustToday({
   onClearStatedMinutes,
   now,
 }: AdjustTodayProps) {
-  const [minutesInput, setMinutesInput] = useState(
-    statedMinutes == null ? "" : String(statedMinutes),
-  );
+  // Seeded from what the user already said, or — the first time — from the time
+  // actually left in the daypart.
+  //
+  // **Not zero.** `DurationField` always holds a number, so unlike the old free-text
+  // minutes field there is no "empty" state to disable the button on. Seeding at 0
+  // would mean opening the panel to look at it, pressing the primary button, and
+  // watching every session drop into "won't fit" — the app presuming the user has no
+  // time because they never said otherwise. The remaining minutes are the honest
+  // opening bid, and they are already on screen in the stat row above.
+  const openingBid = selectedDaypart
+    ? daypartContains(selectedDaypart, now)
+      ? minutesRemainingIn(selectedDaypart, now)
+      : daypartLengthMinutes(selectedDaypart)
+    : 0;
+  const [minutes, setMinutes] = useState(statedMinutes ?? openingBid);
   const [showDaypartPicker, setShowDaypartPicker] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
-    const minutes = Number(minutesInput);
     if (!Number.isFinite(minutes) || minutes < 0) return;
     setSaving(true);
     try {
@@ -100,7 +111,7 @@ export function AdjustToday({
     setSaving(true);
     try {
       await onClearStatedMinutes();
-      setMinutesInput("");
+      setMinutes(openingBid);
       onOpenChange(false);
     } finally {
       setSaving(false);
@@ -203,24 +214,22 @@ export function AdjustToday({
           )}
 
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="adjust-minutes">Minutes you have now</Label>
-            <Input
-              id="adjust-minutes"
-              type="number"
-              inputMode="numeric"
+            <p className="text-label text-text">How much time do you have?</p>
+            {/* `min={0}` rather than the component's default of 1: "no time at all"
+                is a legitimate thing to say here, and it is the answer that makes
+                every session render as won't-fit. On a goal's session length, zero
+                would be meaningless — hence the different floor. */}
+            <DurationField
+              idPrefix="adjust"
+              value={minutes}
+              onChange={setMinutes}
               min={0}
-              value={minutesInput}
-              onChange={(e) => setMinutesInput(e.target.value)}
             />
           </div>
         </div>
 
         <SheetFooter>
-          <Button
-            className="min-h-11"
-            disabled={!selectedDaypart || minutesInput === "" || saving}
-            onClick={submit}
-          >
+          <Button className="min-h-11" disabled={!selectedDaypart || saving} onClick={submit}>
             Pack the list
           </Button>
           {statedMinutes != null && (
