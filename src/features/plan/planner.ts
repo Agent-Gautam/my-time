@@ -187,16 +187,28 @@ export interface ReconciledSlot {
  * full re-layout after reconciling is explicitly `[later]` (PRD §6.4), and D32 says
  * recompute from inputs, never patch an output. Nothing here writes.
  *
+ * **`availableMinutes: null` means "no limit stated"** — Today's default since D63,
+ * where the screen opens on the proposed list and stating a time is an explicit,
+ * occasional action. Everything is returned in `keep` and `dropped` is empty.
+ *
+ * Null is a real branch rather than a very large number, and that is not style.
+ * `reconcileDaypart` allocates a knapsack table of `availableMinutes + 1` cells
+ * (`core/reconcile.ts`), so `Infinity` throws outright and a "big enough" sentinel
+ * silently allocates a huge array on a budget phone — the exact shape D47 exists to
+ * prevent. There is also nothing to decide when no limit was given: every slot is
+ * kept, so the packing pass has no work to do.
+ *
  * Ordering note: `reconcileDaypart` documents that its input arrives "in priority
  * order — the order layout.ts produces", but `layoutWeek` sorts by date, then
  * daypart, then `stageId` alphabetically, and `getPlanSlotsForDaypart` returns
  * index order regardless. So priority order is imposed here by re-scoring with the
- * same `scoreStage` layout uses. Reported as a `core/` doc mismatch.
+ * same `scoreStage` layout uses. That ordering still applies when nothing is
+ * dropped: it is what puts the most pressing session at the top of the list.
  */
 export async function reconcileNow(input: {
   now: IsoDateTime;
   daypartId: string;
-  availableMinutes: number;
+  availableMinutes: number | null;
 }): Promise<{ keep: ReconciledSlot[]; dropped: ReconciledSlot[] }> {
   const { now, daypartId, availableMinutes } = input;
 
@@ -265,11 +277,10 @@ export async function reconcileNow(input: {
     return a.stageId.localeCompare(b.stageId); // deterministic tiebreak
   });
 
-  const { keep, dropped } = reconcileDaypart({
-    slots: ordered,
-    availableMinutes,
-    now,
-  });
+  const { keep, dropped } =
+    availableMinutes == null
+      ? { keep: ordered as PlanSlot[], dropped: [] as PlanSlot[] }
+      : reconcileDaypart({ slots: ordered, availableMinutes, now });
 
   const enrich = (slot: PlanSlot): ReconciledSlot => {
     const local = slot as LocalPlanSlot;

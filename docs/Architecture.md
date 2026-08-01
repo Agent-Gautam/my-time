@@ -338,13 +338,30 @@ cadence, eligible dayparts, time-box, optional scope) → layout runs → the we
 
 ```
 open app
-  → lib/daypart.ts identifies the current daypart; user confirms or corrects
-  → surface states: minutes required for this daypart · daypart length · when it ends  (D8)
-  → user states available minutes
-  → core/reconcile.ts packs the fitting sessions, each with its reason               (D14)
-  → user taps done / skipped per item                                                (one tap)
+  → lib/daypart.ts identifies the current daypart and states it
+  → planner.reconcileNow({ availableMinutes: null }) — every planned session, ranked,
+    nothing dropped, each with its reason                                          (D14)
+  → surface states the gap: minutes required for this daypart · minutes left in it  (D8)
+  → user taps done / skipped per item                                        (one tap)
   → session_logs appended; outbox queued; layout regenerates future slots only
 ```
+
+**"Adjust today" is a detour off that line, not a step on it** (D63). It writes a
+`check_ins` row and re-runs the same `reconcileNow` with a real number, which is what
+puts anything into "won't fit":
+
+```
+user opens "Adjust today"
+  → corrects the daypart if it is wrong; sees D8's four numbers
+  → states available minutes
+  → putCheckIn appends the row; outbox queued
+  → planner.reconcileNow({ availableMinutes: stated − already logged })
+  → core/reconcile.ts packs what fits; the rest renders read-only            (D27)
+```
+
+The stated minutes are read back from the `check_ins` row rather than held in
+component state, so a reload or a backgrounded PWA resumes with it intact. Time
+already spent is derived from the day's `session_logs`, not decremented in memory.
 
 Every step of this works offline.
 

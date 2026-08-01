@@ -101,8 +101,11 @@ afternoon-or-evening. (D7)
 of the underlying content (D12). DSA is 60 minutes whether the video ran 22 minutes or
 40. ±10 minutes is acceptable drift.
 
-**Check-in** — the user arrives, the app identifies the current daypart, asks how much
-time is available, and reconciles the plan against reality. (D8)
+**Check-in** — the user states how much time they actually have, and the plan is
+reconciled against it. **Optional and occasional, not the way in** (D63): opening the
+app shows the daypart's planned sessions straight away. On screen it is called
+*"Adjust today"*; *check-in* remains the name of the stored fact and of the
+`check_ins` record. (D8, D63)
 
 **Active cap** — the maximum number of goals that may be active in a given daypart,
 set by the user in settings. Goals beyond it wait in a **future/planned** state. (D11)
@@ -168,17 +171,28 @@ Deferred items are **designed, not dropped** — see §8 and D29.
 - **[later]** Full background re-layout after reconciliation, to quietly improve the
   rest of the week off the critical path.
 
-### 6.5 Check-in
+### 6.5 Today, and check-in
 
-- **[v1]** Detects the current daypart; user confirms or corrects.
+**Opening the app costs nothing** (D63). Today detects the current daypart and shows
+the sessions the plan already put there — no form, no gate.
+
+- **[v1]** Detects the current daypart and **states** it; the user may correct it.
+- **[v1]** Shows every session planned for that daypart, ranked, each logged in one
+  tap.
+- **[v1]** States the gap plainly: **time required for everything planned in this
+  daypart** against **the time left in it**, plus the daypart's length and when it
+  ends — so the gap is visible immediately, without the user having to ask. (D8)
+- **[v1]** Each item carries **one line of reasoning**. (D14)
+
+**Check-in — on screen, "Adjust today" — is an explicit, occasional action**, for a
+day that is not ordinary:
+
 - **[v1]** User states available time.
-- **[v1]** Surface states plainly: **time required for everything planned in this
-  daypart**, **the daypart's length**, and **when it ends** — so the gap is visible
-  immediately. (D8)
 - **[v1]** Produces a ranked, packed list of sessions that fits the stated time.
 - **[v1]** If a session's box does not fit the remaining time, it is not scheduled.
   No partial sessions. (D27)
-- **[v1]** Each item carries **one line of reasoning**. (D14)
+- **[v1]** The stated time persists for that daypart occurrence, so a reload or a
+  backgrounded app does not silently forget it.
 
 ### 6.6 Logging
 

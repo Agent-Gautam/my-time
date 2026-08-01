@@ -1,51 +1,52 @@
 "use client";
 
-// The daily loop (PRD §6.5–§6.7, Architecture.md §9.2):
-//   detect/confirm daypart -> surface the three numbers (D8) -> state available
-//   minutes -> reconcileNow packs the fitting sessions -> one tap per session logs
-//   it -> relayoutWeek regenerates future slots -> the on-track summary, calmly.
+// Today (PRD §6.5–§6.7, Architecture.md §9.2):
+//   detect the daypart -> show the sessions the plan put there, with the gap stated
+//   -> one tap per session logs it -> relayoutWeek regenerates future slots -> the
+//   on-track summary, calmly.
 //
-// **Clock reads (D53's convention, applied at every write site here):** the
-// mount-time `initialNow` below is a read-only convenience — it seeds the
-// detected-daypart default and the pre-check-in stat numbers, both of which the
-// user reviews and can correct before anything is written (PRD §6.5: "confirms or
-// corrects"). Every actual write — `putCheckIn`, `logSession`, `putCheckpoint` —
-// calls `localNow()` fresh at the moment of that action instead of reusing a
-// frozen value, so a tab left open and backgrounded for hours (the normal PWA
-// resume pattern) can't record a session against the wrong daypart or the wrong
-// calendar day.
+// **Opening Today costs nothing (D63).** This screen used to be a gate: a form
+// rendered first, and the session list did not exist until the user typed a number
+// and pressed "Check in". Stating available time is now the explicit, occasional act
+// of `<AdjustToday />`, for the days that are not ordinary. D8 is unchanged — the plan
+// is still laid out ahead, reconciliation still happens when a time is stated, and
+// D8's numbers are still visible immediately, now as the gap line below.
+//
+// **Clock reads (D53's convention, applied at every write site here):** the mount-time
+// `initialNow` is a read-only convenience — it seeds the detected daypart and the
+// numbers on screen, all of which the user reviews and can correct before anything is
+// written. Every actual write — `putCheckIn`, `logSession`, `putCheckpoint` — calls
+// `localNow()` fresh at the moment of that action instead of reusing a frozen value,
+// so a tab left open and backgrounded for hours (the normal PWA resume pattern) cannot
+// record a session against the wrong daypart or the wrong calendar day.
 import { useState } from "react";
+import Link from "next/link";
 import { useLiveQuery } from "dexie-react-hooks";
 
 import { Button } from "@/components/ui/button";
 import { DartLoader } from "@/components/dart-mark";
-import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 
 import {
   currentDaypart,
   daypartContains,
   daypartDate,
   daypartEndsAt,
-  daypartLengthMinutes,
   localNow,
   minutesRemainingIn,
 } from "@/lib/daypart";
 import { formatDuration } from "@/lib/duration";
-import { getDayparts, getGoalsWithStage, getLatestCheckpoint } from "@/db/local/queries";
+import {
+  getDayparts,
+  getGoalsWithStage,
+  getLatestCheckIn,
+  getLatestCheckpoint,
+  getSessionLogsForDaypart,
+} from "@/db/local/queries";
 import { logSession, putCheckIn } from "@/db/local/mutations";
 import type { LocalStage } from "@/db/local/schema";
-import type { IsoDate, IsoDateTime } from "@/core/types";
 import { reconcileNow, relayoutWeek, type ReconciledSlot } from "@/features/plan/planner";
 
+import { AdjustToday } from "./adjust-today";
 import { CheckpointPrompt, type CheckpointTarget } from "./checkpoint-prompt";
 import { GoalStatusRow } from "./goal-status-row";
 import { SessionCard } from "./session-card";
@@ -56,12 +57,6 @@ import {
   shouldPromptCheckpoint,
   voluntaryCandidates,
 } from "./lib";
-
-interface ActiveCheckIn {
-  now: IsoDateTime;
-  daypartId: string;
-  today: IsoDate;
-}
 
 export function CheckinView() {
   const [initialNow] = useState(() => localNow());
@@ -79,46 +74,93 @@ export function CheckinView() {
   // exists once the user actually corrects it (PRD §6.5: "confirms or corrects").
   const detectedDaypartId = currentDaypart(dayparts, initialNow)?.id ?? dayparts[0]?.id ?? null;
   const [daypartOverride, setDaypartOverride] = useState<string | null>(null);
-  const [showDaypartPicker, setShowDaypartPicker] = useState(false);
   const selectedDaypartId = daypartOverride ?? detectedDaypartId;
   const selectedDaypart = dayparts.find((dp) => dp.id === selectedDaypartId) ?? null;
 
+  // The occurrence's own date, which is yesterday's once a wrapping night daypart has
+  // crossed midnight. Every read and write below keys off this, never `dateOnly(now)`
+  // (D53) — checking in at 02:00 must not look at the wrong day's plan.
+  const occurrenceDate = selectedDaypart ? daypartDate(selectedDaypart, initialNow) : null;
+  const occurrenceKey =
+    occurrenceDate && selectedDaypart ? `${occurrenceDate}|${selectedDaypart.id}` : null;
+
   const requiredMinutes = useLiveQuery(
     () =>
-      selectedDaypart
-        ? requiredMinutesForDaypart(daypartDate(selectedDaypart, initialNow), selectedDaypart.id)
+      occurrenceDate && selectedDaypart
+        ? requiredMinutesForDaypart(occurrenceDate, selectedDaypart.id)
         : undefined,
-    [selectedDaypart, initialNow],
+    [occurrenceDate, selectedDaypart?.id],
   );
 
-  const [availableMinutesInput, setAvailableMinutesInput] = useState("");
-  const [activeCheckIn, setActiveCheckIn] = useState<ActiveCheckIn | null>(null);
-  const [remainingMinutes, setRemainingMinutes] = useState(0);
-  const [pendingSlotIds, setPendingSlotIds] = useState<ReadonlySet<string>>(new Set());
-  const [checkpointTarget, setCheckpointTarget] = useState<CheckpointTarget | null>(null);
+  // ---------------------------------------------------------------------------
+  // Stated time — persisted, not React-only
+  // ---------------------------------------------------------------------------
+  // Held in the `checkIns` row rather than in component state, so a reload or a PWA
+  // resume does not silently forget what the user said. `getLatestCheckIn` is bounded
+  // on the `[date+daypartId]` index and already existed for exactly this.
+  // Wrapped in an object for the same reason `dataReady` exists: `getLatestCheckIn`
+  // resolves to `undefined` when the user has never stated a time, which is
+  // indistinguishable from `useLiveQuery`'s own "still loading" undefined. Rendering
+  // the list before this settles would show every session unpacked for a frame and
+  // then re-pack it, on every load, for anyone who had stated a time.
+  const checkInState = useLiveQuery(
+    () =>
+      occurrenceDate && selectedDaypart
+        ? getLatestCheckIn(occurrenceDate, selectedDaypart.id).then((row) => ({ row }))
+        : undefined,
+    [occurrenceDate, selectedDaypart?.id],
+  );
+  const storedCheckIn = checkInState?.row;
 
+  // "Show everything again" is a view-level reset, not a new fact about the day, so it
+  // is deliberately not written. A reload restores the stated time — the row is still
+  // the truth about what the user said, and re-stating it is one tap.
+  const [clearedFor, setClearedFor] = useState<string | null>(null);
+  const statedMinutes =
+    clearedFor === occurrenceKey ? null : (storedCheckIn?.availableMinutes ?? null);
+
+  // Time already spent in this daypart. Derived from the logs rather than decremented
+  // in state: reload-safe, and it cannot drift from what was actually recorded. Only
+  // `done` counts — skipping a box must not shrink what is left to pack into the rest
+  // of the daypart.
+  const spentMinutes = useLiveQuery(
+    () =>
+      occurrenceDate && selectedDaypart
+        ? getSessionLogsForDaypart(occurrenceDate, selectedDaypart.id).then((logs) =>
+            logs
+              .filter((log) => log.status === "done")
+              .reduce((sum, log) => sum + log.minutes, 0),
+          )
+        : undefined,
+    [occurrenceDate, selectedDaypart?.id],
+  );
+
+  const remainingMinutes =
+    statedMinutes == null ? null : Math.max(statedMinutes - (spentMinutes ?? 0), 0);
+
+  // `null` means no limit stated: every planned session is returned, nothing dropped.
   const reconciled = useLiveQuery(
     () =>
-      activeCheckIn
+      selectedDaypart
         ? reconcileNow({
-            now: activeCheckIn.now,
-            daypartId: activeCheckIn.daypartId,
+            now: initialNow,
+            daypartId: selectedDaypart.id,
             availableMinutes: remainingMinutes,
           })
         : undefined,
-    [activeCheckIn, remainingMinutes],
+    [selectedDaypart?.id, remainingMinutes, initialNow],
   );
 
-  const submitCheckIn = async () => {
-    if (!selectedDaypart) return;
-    const minutes = Number(availableMinutesInput);
-    if (!Number.isFinite(minutes) || minutes < 0) return;
+  const [adjustOpen, setAdjustOpen] = useState(false);
+  const [pendingSlotIds, setPendingSlotIds] = useState<ReadonlySet<string>>(new Set());
+  const [checkpointTarget, setCheckpointTarget] = useState<CheckpointTarget | null>(null);
 
+  const stateMinutes = async (minutes: number) => {
+    if (!selectedDaypart) return;
     const now = localNow();
-    const today = daypartDate(selectedDaypart, now);
-    await putCheckIn({ daypartId: selectedDaypart.id, availableMinutes: minutes, date: today }, now);
-    setRemainingMinutes(minutes);
-    setActiveCheckIn({ now, daypartId: selectedDaypart.id, today });
+    const date = daypartDate(selectedDaypart, now);
+    await putCheckIn({ daypartId: selectedDaypart.id, availableMinutes: minutes, date }, now);
+    setClearedFor(null);
   };
 
   const promptCheckpointIfDue = async (stage: LocalStage, goalName: string, now: string) => {
@@ -136,29 +178,30 @@ export function CheckinView() {
     }
   };
 
+  // No longer gated on a check-in existing: logging a planned session is the whole
+  // point of the screen and must work the moment it renders (D63).
   const logSlot = async (slot: ReconciledSlot, status: "done" | "skipped") => {
-    if (!activeCheckIn) return;
+    if (!selectedDaypart) return;
 
     setPendingSlotIds((prev) => new Set(prev).add(slot.slot.id));
     try {
+      const now = localNow();
+      const date = daypartDate(selectedDaypart, now);
       await logSession(
         {
           stageId: slot.stage.id,
-          date: activeCheckIn.today,
-          daypartId: activeCheckIn.daypartId,
+          date,
+          daypartId: selectedDaypart.id,
           minutes: slot.slot.minutes,
           status,
           source: "planned",
         },
-        activeCheckIn.now,
+        now,
       );
-      await relayoutWeek({ now: activeCheckIn.now });
+      await relayoutWeek({ now });
 
-      // Only a completed session eats into the time actually spent — skipping a
-      // box shouldn't shrink what's left to pack into the rest of the daypart.
       if (status === "done") {
-        setRemainingMinutes((prev) => Math.max(prev - slot.slot.minutes, 0));
-        await promptCheckpointIfDue(slot.stage, slot.goal.name, activeCheckIn.now);
+        await promptCheckpointIfDue(slot.stage, slot.goal.name, now);
       }
     } finally {
       setPendingSlotIds((prev) => {
@@ -175,10 +218,9 @@ export function CheckinView() {
     ...(reconciled?.keep.map((r) => r.stage.id) ?? []),
     ...(reconciled?.dropped.map((r) => r.stage.id) ?? []),
   ]);
-  const voluntaryToday = selectedDaypart ? daypartDate(selectedDaypart, initialNow) : null;
   const candidates = useLiveQuery(
-    () => (voluntaryToday ? voluntaryCandidates(offeredStageIds, voluntaryToday) : undefined),
-    [voluntaryToday, reconciled],
+    () => (occurrenceDate ? voluntaryCandidates(offeredStageIds, occurrenceDate) : undefined),
+    [occurrenceDate, reconciled],
   );
 
   const [pendingVoluntaryIds, setPendingVoluntaryIds] = useState<ReadonlySet<string>>(new Set());
@@ -188,11 +230,11 @@ export function CheckinView() {
     setPendingVoluntaryIds((prev) => new Set(prev).add(stage.id));
     try {
       const now = localNow();
-      const today = daypartDate(selectedDaypart, now);
+      const date = daypartDate(selectedDaypart, now);
       await logSession(
         {
           stageId: stage.id,
-          date: today,
+          date,
           daypartId: selectedDaypart.id,
           minutes: stage.sessionMinutes,
           status: "done",
@@ -211,9 +253,10 @@ export function CheckinView() {
     }
   };
 
-  const daypartOptions = dayparts.map((dp) => ({ id: dp.id, label: capitalize(dp.name) }));
-
-  if (!dataReady) {
+  // Held until the stated time has been read too, not just the dayparts — see
+  // `checkInState`. One extra indexed lookup, against a list that would otherwise
+  // visibly re-pack itself after first paint.
+  if (!dataReady || (selectedDaypart != null && checkInState === undefined)) {
     return (
       <div className="flex flex-1 items-center justify-center py-16">
         <DartLoader className="size-16" />
@@ -221,155 +264,92 @@ export function CheckinView() {
     );
   }
 
+  const plannedTotal = requiredMinutes ?? 0;
+  const leftInDaypart =
+    selectedDaypart && daypartContains(selectedDaypart, initialNow)
+      ? minutesRemainingIn(selectedDaypart, initialNow)
+      : null;
+
   return (
     <div className="flex flex-col gap-6 py-6">
-      <h1 className="text-display font-semibold text-ink">Today</h1>
-
-      {!activeCheckIn || !reconciled ? (
-        <Card>
-          <CardContent className="flex flex-col gap-4">
-            {/* The app knows the time, so it states the daypart rather than asking
-                for it. PRD §6.5 is "confirms or corrects", and a required <Select>
-                made every check-in a correction. Detection is the answer; changing
-                it is a rarely-needed escape hatch, so it stays out of the way until
-                asked for. */}
-            <div className="flex flex-col gap-1.5">
-              <div className="flex items-baseline justify-between gap-3">
-                <p className="text-label text-text-muted">
-                  {selectedDaypart ? (
-                    <>
-                      It&rsquo;s{" "}
-                      <span className="text-text font-medium">
-                        {capitalize(selectedDaypart.name)}
-                      </span>
-                      {!showDaypartPicker && daypartOverride != null && " (you changed this)"}
-                    </>
-                  ) : (
-                    "No dayparts set up yet."
-                  )}
-                </p>
-                {!showDaypartPicker && dayparts.length > 1 && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-label h-auto shrink-0 px-2 py-1"
-                    onClick={() => setShowDaypartPicker(true)}
-                  >
-                    Change
-                  </Button>
-                )}
-              </div>
-
-              {showDaypartPicker && (
-                <>
-                  <Label htmlFor="checkin-daypart" className="sr-only">
-                    Daypart
-                  </Label>
-                  <Select
-                    value={selectedDaypartId ?? undefined}
-                    onValueChange={(value) => {
-                      setDaypartOverride(value as string);
-                      setShowDaypartPicker(false);
-                    }}
-                  >
-                    <SelectTrigger id="checkin-daypart" className="w-full">
-                      <SelectValue placeholder="Pick a daypart" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {daypartOptions.map((dp) => (
-                        <SelectItem key={dp.id} value={dp.id}>
-                          {dp.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </>
-              )}
-            </div>
-
-            {selectedDaypart && (
-              <div className="grid grid-cols-2 gap-3 rounded-lg border border-border bg-surface-2 p-3 sm:grid-cols-4">
-                <Stat label="Required" value={formatDuration(requiredMinutes ?? 0)} />
-                <Stat label="Length" value={formatDuration(daypartLengthMinutes(selectedDaypart))} />
-                {/* minutesRemainingIn is 0 whenever `now` isn't actually inside the
-                    daypart — the normal case right after the user picks a daypart
-                    other than the detected one. "—" reads as "not applicable yet";
-                    "0m" would read as broken. */}
-                <Stat
-                  label="Remaining"
-                  value={
-                    daypartContains(selectedDaypart, initialNow)
-                      ? formatDuration(minutesRemainingIn(selectedDaypart, initialNow))
-                      : "—"
-                  }
-                />
-                <Stat label="Ends at" value={formatClockTime(daypartEndsAt(selectedDaypart, initialNow))} />
-              </div>
-            )}
-
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="checkin-minutes">Minutes you have now</Label>
-              <Input
-                id="checkin-minutes"
-                type="number"
-                inputMode="numeric"
-                min={0}
-                value={availableMinutesInput}
-                onChange={(e) => setAvailableMinutesInput(e.target.value)}
-              />
-            </div>
-
+      <header className="flex flex-col gap-1.5">
+        <div className="flex items-baseline justify-between gap-3">
+          <h1 className="text-display font-semibold text-ink">Today</h1>
+          {selectedDaypart && (
             <Button
-              className="min-h-11"
-              disabled={!selectedDaypart || availableMinutesInput === ""}
-              onClick={submitCheckIn}
+              variant="ghost"
+              size="sm"
+              className="text-label h-auto shrink-0 px-2 py-1"
+              onClick={() => setAdjustOpen(true)}
             >
-              Check in
+              Adjust today
             </Button>
-          </CardContent>
-        </Card>
-      ) : (
-        <section className="flex flex-col gap-3">
-          {reconciled.keep.length === 0 && reconciled.dropped.length === 0 && (
-            <p className="text-body text-text-muted">Nothing planned for this daypart.</p>
           )}
+        </div>
 
-          {reconciled.keep.map((slot) => (
-            <SessionCard
-              key={slot.slot.id}
-              slot={slot}
-              pending={pendingSlotIds.has(slot.slot.id)}
-              onLog={(status) => logSlot(slot, status)}
-            />
-          ))}
+        {selectedDaypart ? (
+          <p className="text-label text-text-muted">
+            <span className="text-text font-medium">{capitalize(selectedDaypart.name)}</span>
+            {" · ends "}
+            {formatClockTime(daypartEndsAt(selectedDaypart, initialNow))}
+            {daypartOverride != null && " (you changed this)"}
+          </p>
+        ) : (
+          <p className="text-label text-text-muted">No dayparts set up yet.</p>
+        )}
 
-          {reconciled.dropped.length > 0 && (
-            <div className="flex flex-col gap-2 pt-2">
-              <p className="text-label font-medium text-text-muted">Won&apos;t fit today</p>
-              {reconciled.dropped.map((slot) => (
-                <div
-                  key={slot.slot.id}
-                  className="flex items-center justify-between rounded-lg border border-border px-3 py-2"
-                >
-                  <div>
-                    <p className="text-body text-text">{slot.goal.name}</p>
-                    <p className="text-label text-text-muted">{slot.reason}</p>
-                  </div>
-                  <span className="numeric text-label text-text-muted">{formatDuration(slot.slot.minutes)}</span>
+        {/* D8's gap, stated and not editorialised. Nothing here is a warning — a
+            plan that overruns the daypart is a fact to see, not a failure (D15). */}
+        {plannedTotal > 0 && (
+          <p className="numeric text-label text-text-muted">
+            {statedMinutes != null
+              ? `${formatDuration(statedMinutes)} stated · ${formatDuration(remainingMinutes ?? 0)} left`
+              : leftInDaypart != null
+                ? `${formatDuration(plannedTotal)} planned · ${formatDuration(leftInDaypart)} left`
+                : `${formatDuration(plannedTotal)} planned`}
+          </p>
+        )}
+      </header>
+
+      <section className="flex flex-col gap-3">
+        {reconciled && reconciled.keep.length === 0 && reconciled.dropped.length === 0 && (
+          <p className="text-body text-text-muted">Nothing planned for this daypart.</p>
+        )}
+
+        {reconciled?.keep.map((slot) => (
+          <SessionCard
+            key={slot.slot.id}
+            slot={slot}
+            pending={pendingSlotIds.has(slot.slot.id)}
+            onLog={(status) => logSlot(slot, status)}
+          />
+        ))}
+
+        {reconciled && reconciled.dropped.length > 0 && (
+          <div className="flex flex-col gap-2 pt-2">
+            <p className="text-label font-medium text-text-muted">Won&apos;t fit today</p>
+            {reconciled.dropped.map((slot) => (
+              <div
+                key={slot.slot.id}
+                className="flex items-center justify-between rounded-lg border border-border px-3 py-2"
+              >
+                <div>
+                  <Link
+                    href={`/goals/${slot.goal.id}`}
+                    className="text-body text-text underline-offset-4 hover:underline"
+                  >
+                    {slot.goal.name}
+                  </Link>
+                  <p className="text-label text-text-muted">{slot.reason}</p>
                 </div>
-              ))}
-            </div>
-          )}
-
-          <Button
-            variant="ghost"
-            className="min-h-11 self-start"
-            onClick={() => setActiveCheckIn(null)}
-          >
-            Re-check in
-          </Button>
-        </section>
-      )}
+                <span className="numeric text-label text-text-muted">
+                  {formatDuration(slot.slot.minutes)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* Voluntary catch-up (Architecture.md §9.3, D20): do a session on your own,
           any time, and it credits against the ideal line without ever being owed. */}
@@ -386,8 +366,15 @@ export function CheckinView() {
                 className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2"
               >
                 <div>
-                  <p className="text-body text-text">{goal.name}</p>
-                  <p className="numeric text-label text-text-muted">{formatDuration(stage.sessionMinutes)}</p>
+                  <Link
+                    href={`/goals/${goal.id}`}
+                    className="text-body text-text underline-offset-4 hover:underline"
+                  >
+                    {goal.name}
+                  </Link>
+                  <p className="numeric text-label text-text-muted">
+                    {formatDuration(stage.sessionMinutes)}
+                  </p>
                 </div>
                 <Button
                   variant="outline"
@@ -414,16 +401,25 @@ export function CheckinView() {
         </section>
       )}
 
-      <CheckpointPrompt target={checkpointTarget} onDone={() => setCheckpointTarget(null)} />
-    </div>
-  );
-}
+      {/* Keyed so the panel's minutes field starts from whatever is currently stated.
+          It seeds that from a prop in `useState`, which runs once per mount — without
+          a key it would keep showing the value from the first render forever. */}
+      <AdjustToday
+        key={`${occurrenceKey}|${statedMinutes ?? ""}`}
+        open={adjustOpen}
+        onOpenChange={setAdjustOpen}
+        dayparts={dayparts}
+        selectedDaypart={selectedDaypart}
+        onSelectDaypart={setDaypartOverride}
+        daypartWasChanged={daypartOverride != null}
+        requiredMinutes={plannedTotal}
+        statedMinutes={statedMinutes}
+        onStateMinutes={stateMinutes}
+        onClearStatedMinutes={() => setClearedFor(occurrenceKey)}
+        now={initialNow}
+      />
 
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-caption text-text-subtle">{label}</span>
-      <span className="numeric text-section font-semibold text-ink">{value}</span>
+      <CheckpointPrompt target={checkpointTarget} onDone={() => setCheckpointTarget(null)} />
     </div>
   );
 }
