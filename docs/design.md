@@ -203,11 +203,14 @@ loop isn't read as a silent exception.
 
 - **The check-off.** The most repeated interaction in the app — worth a small, precise
   transform. Not a celebration; no confetti, which would contradict §1 and D15.
-- **Sync status changes** — cross-fade only. It must never pull attention.
+- **Sync status changes** — cross-fade between states, and **rotation on `syncing`
+  alone** (D69). The spinner is legibility, not emphasis: `syncing` and `pending` are
+  both small and both amber, and motion is the only thing that separates "working on
+  it" from "queued". It stops by itself. Every other state stays still.
 - **List settle after reconciliation.** Should be rare anyway, since layout minimises
   churn (D32).
 - **Theme change** — brief cross-fade, so an automatic daypart switch isn't a jolt.
-- **The loading mark.** The one infinite loop in the app (D61) — a dart landing on a
+- **The loading mark.** The app's own infinite loop (D61) — a dart landing on a
   board, resolving into the app's own icon on its resting frame. Not a spinner.
 
 Everything else: no animation is the correct amount.
