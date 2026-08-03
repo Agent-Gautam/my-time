@@ -2169,6 +2169,68 @@ done never does, soft-delete hidden from both surfaces, prune) and one index ass
 
 ---
 
+## Session — 2026-08-02 · The sync indicator became readable (D69)
+
+Built on a separate branch, `fix/sync-indicator-readable`, in parallel with the tasks
+work above. Three user-requested changes to the always-visible sync indicator
+(`components/sync-status.tsx`), all UI, none touching the sync engine or `core/`:
+
+1. **`syncing` rotates.** `lucide-react`'s `LoaderCircle` with Tailwind's
+   `animate-spin` — CSS-declarative, `transform` only, no new keyframes and no
+   `prefers-reduced-motion` special case (the global collapse in `globals.css` already
+   lands a 0→360° rotation back at rest).
+2. **A popover explains the state.** Hover, focus or tap opens a plain-language
+   explanation of the current state — including, explicitly, *what the amber dot and the
+   number beside it mean*. Base UI's `Popover` with `openOnHover` on the trigger, so one
+   component covers pointer and touch. `lastPullAt` finally has a reader: "last checked
+   the server 4m ago", computed inside the popup (which mounts on open, so no hydration
+   mismatch from a clock read).
+3. **`offline` shows `WifiOff`.** The old glyph was full-strength wifi bars, which at
+   16px reads as *connected* — the opposite of the state.
+
+**New file:** `components/ui/popover.tsx` — Base UI wrapper in the same shape as the
+existing `tooltip.tsx`. **No new dependency**: `@base-ui/react` already ships `popover`.
+
+**D69 records the contradiction, because there is one.** `design.md` §6.3 said "sync
+status changes — cross-fade only. It must never pull attention", and the code carried a
+comment keeping the icon deliberately still. Both are now updated rather than quietly
+ignored. The argument: `syncing` and `pending` are both amber at 16px, so held still they
+were indistinguishable, and rotation is what makes them different states rather than
+emphasis. §6.1's ban on looping shimmer / pulsing dots / parallax is untouched — those
+loop with nothing behind them; this stops when the flush lands. D46 is intact: the
+trigger is a **disclosure**, not a sync action — no fill, no press state, no path into
+the engine.
+
+**Gates:** `lint` clean, **211 tests** pass (unchanged — UI needs none per CLAUDE.md),
+`build` clean. `npm run build` first failed on a stale `.next/dev/types/validator.ts`
+from a previous dev server; `rm -rf .next/dev` fixed it. Nothing to do with this change,
+but worth knowing when a build fails on a file nobody wrote.
+
+**Browser pass, and what it confirmed about the *previous* session's open item.**
+Checked at **1038px and at 360×740** in a real browser. Desktop: the spinner rotates, the
+popover opens on click, tracks state live, and flips below the sticky top bar. Mobile:
+`side="top"` puts it above the fixed bottom bar and the 288px popup shifts to fit a 360px
+viewport with room to spare. Forcing `navigator.onLine = false` swapped in the
+crossed-out wifi icon and the offline copy immediately. Three of five states were seen
+live — `syncing`, `offline`, `pending`; `synced` couldn't be reached locally, see below.
+**No test data created — nothing to clean up** (screenshots the tooling wrote to the repo
+root were deleted).
+
+**Three defects caught in review after the first browser pass, all fixed:** `"1 change
+are queued"` in the offline copy at `pendingCount === 1` (only the 5-changes case had
+been seen), `text-text-subtle` on the footer line — `design.md` §7 makes that token
+large-text-only and the footer is 12px — and the `aria-live` region, which is now gone
+rather than fixed (reasoning in D69).
+
+While doing it, the console showed `POST /api/sync` returning **500 on every retry**.
+That is the previous session's known gap, now observed rather than predicted:
+`drizzle/0003_one_off_tasks.sql` **still has not been applied to Supabase**. Until it is,
+the indicator sits in `syncing`/backoff forever on this machine — which incidentally made
+the new spinner easy to verify, and is exactly the state the popover now explains.
+**Applying that migration remains the next action.**
+
+---
+
 ## Session — goal-attached tasks (D70), extending the earlier tasks work (D68)
 
 Same working tree as the previous entry, same session. **On `main`, not committed,
@@ -2300,3 +2362,19 @@ minutes, since that's now the actually-asserted behaviour), `build` — all clea
 Supabase; no browser walkthrough yet (this session's whole feedback loop happened
 through your own manual testing, which is exactly the kind of check a browser pass
 would also need to repeat once the migrations are live).
+
+---
+
+## Session — nav becomes a floating dock on desktop; sync status moves to a header
+
+Built on `fix/sync-indicator-readable`, same branch as the D69 session above, after
+it. Desktop nav (`components/nav.tsx`) is now a floating dock pinned to the left
+edge — icon-only at rest, expanding to show labels on hover/focus-within — instead of
+a full-width sticky top bar. Mobile bottom bar unchanged. `SyncStatus` moved out of
+`Nav` (D46: never a destination in that list) into a new `components/header.tsx`,
+sticky at the top on every breakpoint alongside the app mark and wordmark.
+
+**Committed without the usual verification gate, at the user's explicit request** —
+lint/typecheck/test/build were not run before that commit. Ran clean on the branch
+immediately before merging to `main` (see below), so the gate did happen, just after
+the commit rather than before it.

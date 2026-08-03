@@ -1479,9 +1479,46 @@ after a 20-minute task would be the app lying about arithmetic it exists to get 
 
 ---
 
-*(D69 — the sync indicator spinner — lives on `fix/sync-indicator-readable`, a
-separate branch not merged here. The jump from D68 to D70 is deliberate, not a gap:
-D70 was numbered to land after D69 once both branches meet in `main`.)*
+### D69 — The sync indicator spins while syncing and explains itself on demand
+
+**Supersedes** `design.md` §6.3's "sync status changes — cross-fade only", and the
+comment in `sync-status.tsx` that kept the `syncing` icon deliberately still. User's
+call, and the reason it was wrong is specific rather than a change of taste.
+
+**Why the old rule failed.** `syncing` and `pending` render in the same amber at 16px in
+the nav bar — an arc and a dot. Held still, they are indistinguishable in practice, so
+the indicator was reporting five states in a vocabulary the user couldn't read. Rotation
+on `syncing` isn't emphasis; it is what makes "working on it" and "queued" different
+things on screen. It also self-terminates: the spinner exists exactly as long as a flush
+is in flight, so it can't become ambient noise the way a pulsing dot would.
+
+This does not reopen §6.1's ban. **Looping shimmer, pulsing dots and parallax stay
+banned** — they loop with nothing behind them, purely to attract the eye. The spinner
+loops because a real operation is running. Same D61 constraints hold: CSS-declarative
+(`animate-spin`), `transform` only, no JS driving it, and the global
+`prefers-reduced-motion` collapse in `globals.css` handles it with no special case (a
+single 0.01ms iteration of a 0→360° rotation lands back at rest).
+
+**The popover.** The indicator gains a disclosure — hover, focus or tap — that says in
+plain words which state is showing, what the amber dot and its number mean, and, for
+every state, that nothing needs doing. `lastPullAt` finally has a reader: "last checked
+the server 4m ago".
+
+**This is not a sync button, and D46 is intact.** The trigger reveals an explanation and
+touches nothing: no fill, no press state, no code path into the engine. D46 forbids
+*acting* on sync, not *understanding* it — and an always-visible status the user can't
+decode was only half-keeping the decision. The clock read lives inside the popup, which
+mounts on open, so a relative time can't cause a hydration mismatch.
+
+**The `aria-live` region is deliberately gone.** It never actually announced — it sat on
+a div whose accessible name came from `aria-label`, which screen readers don't reliably
+re-announce. Making it work would have meant speaking every `syncing → pending →
+syncing` transition of a retry loop out loud, which is D46's "never pull attention" lost
+on a different channel. The state is on the trigger's label for anyone who focuses it,
+and in the popover in full for anyone who asks. Available, never announced.
+
+`offline` also stops using the full-signal wifi glyph. At 16px, wifi bars read as
+*connected*; the crossed-out signal (`WifiOff`) reads as the state it actually is.
 
 ---
 
