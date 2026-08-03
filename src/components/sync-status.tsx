@@ -5,7 +5,6 @@ import { Check, CircleSlash, LoaderCircle, WifiOff } from "lucide-react";
 import {
   Popover,
   PopoverContent,
-  PopoverDescription,
   PopoverTitle,
   PopoverTrigger,
 } from "@/components/ui/popover";
@@ -21,9 +20,9 @@ import type { IsoDateTime } from "@/core/types";
  * pressing it explains the state and does nothing to the sync engine (D46, D69).
  *
  * The five states are deliberately not self-explanatory at 16px — "amber dot plus a
- * number" is a code, not information — so hovering or tapping opens a plain-language
- * explanation of what is showing and what, if anything, happens next. Every answer
- * ends the same way: nothing for the user to do.
+ * number" is a code, not information — so hovering or tapping opens the one word or
+ * short phrase that names the state. Nothing more: there is never an action to take,
+ * so there is nothing to explain beyond what it is.
  */
 export function SyncStatus() {
   const { status, pendingCount, lastPullAt } = useSyncStatus();
@@ -121,6 +120,11 @@ function StatusIcon({ status }: { status: SyncStatus }) {
  * The popover body. Mounted only while open, which is also why the clock read lives
  * here: `lastPullAt` is rendered relative to *now*, and doing that during the first
  * render of a server-rendered page would be a hydration mismatch.
+ *
+ * One line, not a paragraph (D69 revised): the state is already legible from the icon
+ * and count on the trigger — the popover exists for the one word or phrase that names
+ * it, not an essay on how sync works. No separate body: at this length a title plus a
+ * description just repeats itself.
  */
 function StatusExplanation({
   status,
@@ -131,65 +135,41 @@ function StatusExplanation({
   pendingCount: number;
   lastPullAt: IsoDateTime | null;
 }) {
-  const { title, body } = explain(status, pendingCount);
-
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center gap-2">
         <StatusIcon status={status} />
-        <PopoverTitle>{title}</PopoverTitle>
+        <PopoverTitle>{explain(status, pendingCount)}</PopoverTitle>
       </div>
-      <PopoverDescription>{body}</PopoverDescription>
       {/* `text-text-muted`, not `text-subtle` — §7 makes subtle large-text-only, and
           caption is the smallest step in the scale. */}
-      <p className="text-caption text-text-muted border-border mt-0.5 border-t pt-1.5">
+      <p className="text-caption text-text-muted">
         {lastPullAt
-          ? `Last checked the server ${formatSince(lastPullAt, localNow())}.`
-          : "This device hasn't checked the server yet."}
+          ? `Last checked ${formatSince(lastPullAt, localNow())}.`
+          : "Never checked the server."}
       </p>
     </div>
   );
 }
 
-function explain(
-  status: SyncStatus,
-  pendingCount: number,
-): { title: string; body: string } {
+function explain(status: SyncStatus, pendingCount: number): string {
   const changes = `${pendingCount} change${pendingCount === 1 ? "" : "s"}`;
 
   switch (status) {
     case "synced":
-      return {
-        title: "Up to date",
-        body: "Everything on this device has reached the server, and nothing new is waiting from your other devices.",
-      };
+      return "Synced";
 
     case "syncing":
-      return {
-        title: "Syncing",
-        body: "Sending what this device has and fetching anything changed elsewhere. The spinner stops on its own when it's done.",
-      };
+      return "Syncing changes";
 
     case "pending":
-      return {
-        title: `${changes} waiting`,
-        body: `The amber dot means work is saved here but hasn't reached the server yet, and the number beside it is how many — ${changes} right now. It uploads by itself; there's nothing to press.`,
-      };
+      return `${changes} waiting for sync`;
 
     case "offline":
-      return {
-        title: "Offline",
-        body:
-          pendingCount > 0
-            ? `No network. Everything still saves on this device — ${changes} waiting here, and the queue goes up on its own once you're back online.`
-            : "No network. Everything still saves on this device and syncs on its own once you're back online.",
-      };
+      return pendingCount > 0 ? `Offline — ${changes} waiting` : "Offline — sync paused";
 
     case "blocked":
-      return {
-        title: "Not syncing on this device",
-        body: "The server didn't accept this device's sync key, so nothing is going up or coming down. Your data is safe here, and nothing you did caused it.",
-      };
+      return "Sync disabled on this device";
   }
 }
 
@@ -206,17 +186,7 @@ function formatSince(from: IsoDateTime, now: IsoDateTime): string {
   return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
+/** Same wording as the popover (`explain`) — one state, one name for it. */
 function getAriaLabel(status: SyncStatus, pendingCount: number): string {
-  switch (status) {
-    case "synced":
-      return "All changes synced.";
-    case "syncing":
-      return "Syncing changes.";
-    case "offline":
-      return "Offline. Changes will sync when connected.";
-    case "pending":
-      return `${pendingCount} change${pendingCount === 1 ? "" : "s"} pending sync.`;
-    case "blocked":
-      return "Not syncing on this device. Your changes are saved here.";
-  }
+  return `${explain(status, pendingCount)}.`;
 }
