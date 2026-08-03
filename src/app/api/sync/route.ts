@@ -47,6 +47,7 @@ import {
   pushSubscriptions,
   sessionLogs,
   stages,
+  tasks,
   users,
 } from "@/db/server/schema";
 import { LOCAL_USER_ID } from "@/db/ids";
@@ -351,6 +352,46 @@ async function applyChange(change: SyncChange, userId: string): Promise<void> {
       return;
     }
 
+    // A one-off task (D68). Mutable, so it takes the same LWW guard as the rows
+    // above rather than the append-only union below: it is created pending and
+    // rewritten once when it is answered, and the later answer must win.
+    case "tasks": {
+      const row = payload as {
+        id: string;
+        title: string;
+        minutes: number;
+        date: IsoDate;
+        daypartId: string;
+        stageId: string | null;
+        status: "pending" | "done" | "skipped";
+        resolvedAt: IsoDateTime | null;
+        createdAt: IsoDateTime;
+        updatedAt: IsoDateTime;
+        deletedAt: IsoDateTime | null;
+      };
+      const set = {
+        title: row.title,
+        minutes: row.minutes,
+        date: row.date,
+        daypartId: row.daypartId,
+        stageId: row.stageId,
+        status: row.status,
+        resolvedAt: toDbOrNull(row.resolvedAt),
+        updatedAt: toDb(row.updatedAt),
+        deletedAt: toDbOrNull(row.deletedAt),
+        serverUpdatedAt: now,
+      };
+      await db
+        .insert(tasks)
+        .values({ id: row.id, userId, createdAt: toDb(row.createdAt), ...set })
+        .onConflictDoUpdate({
+          target: tasks.id,
+          set,
+          setWhere: newerThanStored(tasks.updatedAt, row.updatedAt),
+        });
+      return;
+    }
+
     // --- append-only: union. Insert if absent, never overwrite (D32, merge.ts) ---
 
     case "sessionLogs": {
@@ -363,6 +404,7 @@ async function applyChange(change: SyncChange, userId: string): Promise<void> {
         status: "done" | "skipped";
         source: "planned" | "voluntary";
         loggedAt: IsoDateTime;
+        taskId: string | null;
       };
       await db
         .insert(sessionLogs)
@@ -375,6 +417,7 @@ async function applyChange(change: SyncChange, userId: string): Promise<void> {
           status: row.status,
           source: row.source,
           loggedAt: toDb(row.loggedAt),
+          taskId: row.taskId,
           serverUpdatedAt: now,
         })
         .onConflictDoNothing();
@@ -550,6 +593,12 @@ async function applyDelete(change: SyncChange, now: Date): Promise<void> {
         .update(stages)
         .set({ deletedAt: at, updatedAt: at, serverUpdatedAt: now })
         .where(and(eq(stages.id, change.rowId), lt(stages.updatedAt, at)));
+      return;
+    case "tasks":
+      await db
+        .update(tasks)
+        .set({ deletedAt: at, updatedAt: at, serverUpdatedAt: now })
+        .where(and(eq(tasks.id, change.rowId), lt(tasks.updatedAt, at)));
       return;
     case "pushSubscriptions":
       await db
@@ -743,6 +792,7 @@ async function pull(
       status: row.status,
       source: row.source,
       loggedAt: fromDb(row.loggedAt),
+      taskId: row.taskId,
     }));
     record("sessionLogs", result);
   }
@@ -792,6 +842,40 @@ async function pull(
       checkedInAt: fromDb(row.checkedInAt),
     }));
     record("checkIns", result);
+  }
+
+  // --- tasks (floored: `pruneHistoryBefore` deletes them locally, D68) ---
+  {
+    const at = parseCursor(since.tasks);
+    const raw = await db
+      .select()
+      .from(tasks)
+      .where(
+        historyFloor
+          ? and(
+              eq(tasks.userId, userId),
+              gt(tasks.serverUpdatedAt, at),
+              gte(tasks.date, historyFloor),
+            )
+          : and(eq(tasks.userId, userId), gt(tasks.serverUpdatedAt, at)),
+      )
+      .orderBy(tasks.serverUpdatedAt)
+      .limit(limit + 1);
+    const result = page(raw, limit, at);
+    rows.tasks = result.rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      minutes: row.minutes,
+      date: row.date,
+      daypartId: row.daypartId,
+      stageId: row.stageId,
+      status: row.status,
+      resolvedAt: fromDbOrNull(row.resolvedAt),
+      createdAt: fromDb(row.createdAt),
+      updatedAt: fromDb(row.updatedAt),
+      deletedAt: fromDbOrNull(row.deletedAt),
+    }));
+    record("tasks", result);
   }
 
   // --- push subscriptions ---

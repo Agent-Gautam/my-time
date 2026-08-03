@@ -4,9 +4,10 @@
 // as debt (D20). Rendered in the `neutral` grey token: a missed session is
 // information, not a verdict (design.md §2.3).
 //
-// "Missed" covers both an unlogged session whose daypart has already ended (the
-// primary case — the user never opened the app for it) and an explicit one-tap
-// "Skipped" (Architecture.md §9.3). Scanned backward week by week via
+// "Missed" covers an unlogged session whose daypart has already ended (the primary
+// case — the user never opened the app for it), an explicit one-tap "Skipped"
+// (Architecture.md §9.3), and a one-off task answered neither way before its daypart
+// ran out (D68). Scanned backward week by week via
 // `missedOccurrencesPage`, bounded per click rather than an unbounded history read
 // (D47).
 import { useEffect, useRef, useState } from "react";
@@ -22,16 +23,21 @@ import {
   type MissedOccurrence,
 } from "@/features/checkin/lib";
 
-interface MissedRow extends MissedOccurrence {
-  goalName: string;
-}
+type MissedRow = MissedOccurrence & { label: string };
 
-async function withGoalNames(
+/**
+ * The name to show. A session borrows its goal's, through a small per-page cache; a
+ * one-off task carries its own title and needs no lookup at all (D68) — reaching for
+ * `stageId` on a task would find nothing and render every task as "Deleted goal".
+ */
+async function withLabels(
   occurrences: readonly MissedOccurrence[],
   cache: Map<string, string>,
 ): Promise<MissedRow[]> {
   return Promise.all(
     occurrences.map(async (occ) => {
+      if (occ.source === "task") return { ...occ, label: occ.title };
+
       let goalName = cache.get(occ.stageId);
       if (goalName === undefined) {
         const stage = await localDb.stages.get(occ.stageId);
@@ -39,7 +45,7 @@ async function withGoalNames(
         goalName = goal?.name ?? "Deleted goal";
         cache.set(occ.stageId, goalName);
       }
-      return { ...occ, goalName };
+      return { ...occ, label: goalName };
     }),
   );
 }
@@ -65,7 +71,7 @@ export default function MissedPage() {
       const from = cursor ?? currentWeekStart(now);
 
       const page = await missedOccurrencesPage(now, from);
-      const enriched = await withGoalNames(page.occurrences, goalNameCache.current);
+      const enriched = await withLabels(page.occurrences, goalNameCache.current);
 
       setRows((prev) => [...prev, ...enriched]);
       setCursor(page.nextWeekStart);
@@ -104,8 +110,11 @@ export default function MissedPage() {
               className="flex items-center justify-between rounded-lg border border-border px-3 py-2"
             >
               <div>
-                <p className="text-body text-neutral">{row.goalName}</p>
-                <p className="text-label text-text-subtle">{formatIsoDate(row.date)}</p>
+                <p className="text-body text-neutral">{row.label}</p>
+                <p className="text-label text-text-subtle">
+                  {formatIsoDate(row.date)}
+                  {row.source === "task" && " · task"}
+                </p>
               </div>
               <span className="numeric text-label text-neutral">{formatDuration(row.minutes)}</span>
             </li>

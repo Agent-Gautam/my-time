@@ -21,6 +21,7 @@ import type {
   PlanSlot,
   SessionLog,
   Stage,
+  Task,
 } from "@/core/types";
 
 /** Carried by every mutable synced row. LWW on `updatedAt` resolves edits (§6);
@@ -45,6 +46,14 @@ export type LocalStage = Stage & Mutable;
 export type LocalSessionLog = SessionLog;
 export type LocalCheckpoint = Checkpoint;
 export type LocalCheckIn = CheckIn;
+
+/**
+ * Mutable, not append-only: a task is created pending and later answered, so the row
+ * is rewritten once and LWW on `updatedAt` is what resolves two devices answering it.
+ * That is the difference from a `SessionLog`, which is a fact the moment it exists.
+ * It is also a *growing* table — every read below goes through a date range (D47).
+ */
+export type LocalTask = Task & Mutable;
 
 export interface LocalPushSubscription extends Mutable {
   id: string;
@@ -78,6 +87,7 @@ export const SYNCED_TABLES = [
   "sessionLogs",
   "checkpoints",
   "checkIns",
+  "tasks",
   "pushSubscriptions",
   "planWeeks",
   "planSlots",
@@ -110,6 +120,7 @@ export class MyTimeDB extends Dexie {
   sessionLogs!: Table<LocalSessionLog, string>;
   checkpoints!: Table<LocalCheckpoint, string>;
   checkIns!: Table<LocalCheckIn, string>;
+  tasks!: Table<LocalTask, string>;
   pushSubscriptions!: Table<LocalPushSubscription, string>;
   planWeeks!: Table<LocalPlanWeek, string>;
   planSlots!: Table<LocalPlanSlot, string>;
@@ -143,6 +154,31 @@ export class MyTimeDB extends Dexie {
       planSlots: "id, planWeekId, stageId, date, [date+daypartId], [weekStart+date]",
 
       outbox: "++seq, table, queuedAt",
+    });
+
+    // A **new version block**, never an edit to `version(1)` above. Editing v1 in
+    // place does nothing on a device that already opened v1 — Dexie only runs an
+    // upgrade when the declared version number rises — so the object store would
+    // never be created and the first `localDb.tasks` read would throw on exactly the
+    // installed PWAs this app is for. Only the changed store is listed; everything
+    // declared in v1 carries forward untouched.
+    //
+    // `[date+daypartId]` serves Today (one occurrence), `date` serves the /missed
+    // week scan and `pruneHistoryBefore` — both ranges, never a full read (D47).
+    this.version(2).stores({
+      tasks: "id, date, [date+daypartId]",
+    });
+
+    // Another new block, not an edit to version(2) — same reason as above: Dexie
+    // only knows a store's index shape from the version it was declared in, and a
+    // device that already opened v2 needs an upgrade path to see the new index.
+    //
+    // `[stageId+date]` backs the goal-detail history page (D70): tasks attached to a
+    // stage, paginated the same keyset way `sessionLogs`'s own `[stageId+date]`
+    // already is. `stageId` alone (not multiEntry — every task has at most one)
+    // serves the "does this stage have any attached tasks at all" existence check.
+    this.version(3).stores({
+      tasks: "id, stageId, date, [stageId+date], [date+daypartId]",
     });
   }
 }

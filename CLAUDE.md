@@ -91,6 +91,26 @@ additive, not a migration. Migrations are explicit Drizzle files, reviewed and c
 **Scope** — do what was asked. No unrequested refactors, no files outside the structure in
 `Architecture.md` §8, no speculative abstraction.
 
+**Test data is borrowed, never left behind.** If a session creates data in the app to try
+something out — a seeded goal or stage, a hand-made task, a session log, a checkpoint, a
+check-in, a push subscription, a row poked in via the console or a script — **that session
+removes it before it ends.** Not "the next session will notice"; it won't, and a fake goal
+is indistinguishable from a real one a week later. Three specifics, because each has
+already gone wrong or nearly has:
+
+- **`dropGoal` is not removal.** It soft-deletes (D48), which is the right behaviour for
+  the user's own data and the wrong one for yours — the row still syncs and still shows up
+  in reads that don't filter state. Delete test rows outright:
+  `localDb.goals.delete(id)` and the matching `stages` / `sessionLogs` / `checkpoints`.
+- **Clean the server too.** Anything that reached Supabase via the outbox or an API route
+  is still there after you clear IndexedDB. Delete it in the SQL editor, in FK order.
+- **Say what you did in `docs/memory.md`.** One line — what you made, that it's gone. If
+  something genuinely has to survive the session, name it there explicitly so the next
+  session knows it is deliberate and can remove it.
+
+Prefer a test over seeded data wherever the question can be answered by one — `tests/`
+runs against `fake-indexeddb` (D55) and leaves nothing behind at all.
+
 **Deploy** — `main` auto-deploys to production. It stays green. Work on branches; they get
 preview URLs. (D40)
 

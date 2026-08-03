@@ -28,6 +28,7 @@ import type {
   PlanSlot,
   SessionLog,
   Stage,
+  Task,
 } from "@/core/types";
 import type { OutboxOp, SyncedTable } from "@/db/local/schema";
 
@@ -48,6 +49,7 @@ export const PULLED_TABLES = [
   "sessionLogs",
   "checkpoints",
   "checkIns",
+  "tasks",
   "pushSubscriptions",
   "planWeeks",
 ] as const;
@@ -75,6 +77,9 @@ export type WireUser = { id: string; email: string | null } & WireMutable;
 export type WireDaypart = Daypart & WireMutable;
 export type WireGoal = Goal & WireMutable;
 export type WireStage = Stage & WireMutable;
+/** Mutable, not a fact — a task is answered after it is created (D68). */
+export type WireTask = Task & WireMutable;
+
 export type WirePushSubscription = {
   id: string;
   endpoint: string;
@@ -131,8 +136,9 @@ export interface SyncRequest {
   /**
    * The oldest date this device intends to keep. The server holds everything (D48)
    * but the device keeps a bounded window (D47), so a fresh cursor must not drag
-   * years of `session_logs` and `check_ins` back down. Applies only to those two
-   * tables — `checkpoints` is never pruned locally, so it is never floored.
+   * years of `session_logs`, `check_ins` and `tasks` back down. Applies to exactly
+   * the tables `pruneHistoryBefore` deletes from — `checkpoints` is never pruned
+   * locally, so it is never floored.
    */
   historyFloor: IsoDate | null;
   /** Max rows per table in the pull half. Server clamps it. */
@@ -156,6 +162,7 @@ export interface PulledRows {
   sessionLogs: WireSessionLog[];
   checkpoints: WireCheckpoint[];
   checkIns: WireCheckIn[];
+  tasks: WireTask[];
   pushSubscriptions: WirePushSubscription[];
   planWeeks: WirePlanWeekBundle[];
 }
@@ -183,6 +190,7 @@ export function emptyPulledRows(): PulledRows {
     sessionLogs: [],
     checkpoints: [],
     checkIns: [],
+    tasks: [],
     pushSubscriptions: [],
     planWeeks: [],
   };

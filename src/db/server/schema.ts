@@ -41,6 +41,7 @@ import type {
   SessionSource,
   SessionStatus,
   StageState,
+  TaskStatus,
   Weekday,
 } from "@/core/types";
 
@@ -237,6 +238,13 @@ export const sessionLogs = pgTable(
     /** `voluntary` credits catch-up without ever imposing debt (D20). */
     source: text("source").$type<SessionSource>().notNull(),
     loggedAt: timestamp("logged_at", { withTimezone: true }).notNull(),
+    /**
+     * The task created alongside this log, if any (D70) — a reference, like
+     * `stageId` above, never content (D12 stays exactly as written). No cascade:
+     * nothing hard-deletes a task today, so the dormant-path convention elsewhere in
+     * this file applies here too.
+     */
+    taskId: uuid("task_id").references(() => tasks.id),
     serverUpdatedAt: serverUpdatedAt(),
   },
   (t) => [
@@ -297,6 +305,55 @@ export const checkIns = pgTable(
     index("check_ins_date_daypart_idx").on(t.date, t.daypartId),
     index("check_ins_cursor_idx").on(t.serverUpdatedAt),
     check("check_ins_available_minutes_check", sql`${t.availableMinutes} >= 0`),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// tasks — one-off time-boxes belonging to no goal (D68)
+//
+// Mutable, not append-only: created pending, answered later, so LWW on `updated_at`
+// resolves two devices answering the same task. That is the whole difference from
+// `session_logs`, which is a fact the moment it is written.
+//
+// No `stage_id` and no `goal_id`, deliberately — a task belongs to nothing, and a
+// nullable FK here would invite the scheduler to start reading it. It is anchored to
+// `(date, daypart_id)` like a plan slot instead, which is what makes it die at the end
+// of its daypart rather than carrying forward (D20).
+// ---------------------------------------------------------------------------
+
+export const tasks = pgTable(
+  "tasks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    minutes: integer("minutes").notNull(),
+    date: date("date", { mode: "string" }).notNull(),
+    /** Same no-cascade rule as everywhere else: a daypart with history can only be
+     *  soft-deleted (D44). */
+    daypartId: text("daypart_id")
+      .notNull()
+      .references(() => dayparts.id),
+    /** The goal's stage this task is attached to, or null for a stray task (D70). No
+     *  cascade — matches `session_logs.stage_id`'s own no-cascade convention. */
+    stageId: uuid("stage_id").references(() => stages.id),
+    status: text("status").$type<TaskStatus>().notNull(),
+    /** When done/skipped was tapped; null while pending. */
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+    serverUpdatedAt: serverUpdatedAt(),
+    deletedAt: deletedAt(),
+  },
+  (t) => [
+    index("tasks_date_daypart_idx").on(t.date, t.daypartId),
+    index("tasks_stage_date_idx").on(t.stageId, t.date),
+    index("tasks_user_idx").on(t.userId),
+    index("tasks_cursor_idx").on(t.serverUpdatedAt),
+    check("tasks_status_check", sql`${t.status} in ('pending','done','skipped')`),
+    check("tasks_minutes_check", sql`${t.minutes} >= 0`),
   ],
 );
 

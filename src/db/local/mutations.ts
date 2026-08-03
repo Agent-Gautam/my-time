@@ -25,6 +25,8 @@ import type {
   IsoDateTime,
   SessionLog,
   Stage,
+  Task,
+  TaskStatus,
 } from "@/core/types";
 
 import {
@@ -35,6 +37,7 @@ import {
   type LocalGoal,
   type LocalSessionLog,
   type LocalStage,
+  type LocalTask,
   type LocalUser,
 } from "./schema";
 import { enqueue } from "./queries";
@@ -145,6 +148,103 @@ export async function dropGoal(goalId: string, now: IsoDateTime): Promise<void> 
   });
 }
 
+/**
+ * Add a one-off task to a daypart occurrence (D68), optionally attached to a goal's
+ * stage (D70) via `stageId` — omitted or `null` is a stray task, unchanged from D68.
+ * The caller passes the occurrence's own `date` (`daypartDate`, D53), so a task added
+ * at 01:00 belongs to the night that is still running rather than to the new calendar
+ * day.
+ *
+ * Mutable, not append-only: it is created pending and answered later, and the answer
+ * rewrites this row rather than writing a second one.
+ */
+export async function putTask(
+  task: Omit<Task, "id" | "stageId" | "status" | "resolvedAt" | "createdAt"> & {
+    id?: string;
+    stageId?: string | null;
+    status?: TaskStatus;
+    resolvedAt?: IsoDateTime | null;
+    createdAt?: IsoDateTime;
+  },
+  now: IsoDateTime,
+): Promise<LocalTask> {
+  const row: LocalTask = {
+    ...task,
+    id: task.id ?? newId(),
+    stageId: task.stageId ?? null,
+    status: task.status ?? "pending",
+    resolvedAt: task.resolvedAt ?? null,
+    createdAt: task.createdAt ?? now,
+    ...mutable(now),
+  };
+  await localDb.transaction("rw", localDb.tasks, localDb.outbox, async () => {
+    await localDb.tasks.put(row);
+    await enqueue("tasks", "put", row.id, row, now);
+  });
+  return row;
+}
+
+/**
+ * Answer a task: done or skipped, the same two outcomes a planned session has, and
+ * neither of them a verdict (D15). A no-op if the row is gone.
+ *
+ * `resolvedAt` records when it was answered; `date`/`daypartId` are left alone, so a
+ * task answered late still belongs to the occurrence it was set for.
+ *
+ * **Stage-linked, done (D70):** also writes a paired voluntary session log for that
+ * stage — the same credit a manually-logged catch-up session gets (D20) — so a task
+ * marked Done actually counts toward the goal's cadence/pace, not just toward the
+ * task's own history. The log's `minutes` is **the task's own `minutes`** — the user's
+ * stated duration, credited as-is, not silently rewritten to the stage's usual box.
+ * `taskId` on the log points back at this row, the same kind of reference `stageId`
+ * already is — not content (D70).
+ *
+ * **Stage-linked, skipped:** resolves the task only. No log — matching the fact that
+ * a voluntary session has no "skip" concept today: nothing was scheduled here to skip.
+ *
+ * **Stray (`stageId == null`):** unchanged from D68 — resolves the task, never a log.
+ *
+ * Known gap (not fixed here): unlike `voluntaryCandidates`, which gates on
+ * `maxPerWeek`/`minRestDays` before a catch-up card ever renders, a stage-linked task
+ * has no such gate at creation. Several tasks attached to one goal, all marked Done,
+ * can produce more voluntary logs in a week than `maxPerWeek` allows.
+ */
+export async function setTaskStatus(
+  taskId: string,
+  status: TaskStatus,
+  now: IsoDateTime,
+): Promise<void> {
+  const existing = await localDb.tasks.get(taskId);
+  if (!existing) return;
+
+  const row: LocalTask = {
+    ...existing,
+    status,
+    resolvedAt: status === "pending" ? null : now,
+    ...mutable(now),
+  };
+
+  await localDb.transaction("rw", localDb.tasks, localDb.outbox, async () => {
+    await localDb.tasks.put(row);
+    await enqueue("tasks", "put", row.id, row, now);
+  });
+
+  if (status === "done" && existing.stageId) {
+    await logSession(
+      {
+        stageId: existing.stageId,
+        date: row.date,
+        daypartId: row.daypartId,
+        minutes: row.minutes,
+        status: "done",
+        source: "voluntary",
+        taskId: row.id,
+      },
+      now,
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Append-only facts — union on sync, no conflict possible (§6)
 // ---------------------------------------------------------------------------
@@ -153,12 +253,24 @@ export async function dropGoal(goalId: string, now: IsoDateTime): Promise<void> 
  * Record what actually happened. `source: "voluntary"` is how catch-up gets
  * credited against the ideal line without ever being imposed as debt (D20) —
  * `"planned"` is the one-tap done/skipped on a scheduled session.
+ *
+ * `taskId` (D70) is an optional reference to the task created alongside this log —
+ * never content, the same kind of pointer `stageId` already is. Omitted or `null` is
+ * every existing call site's behaviour, unchanged.
  */
 export async function logSession(
-  log: Omit<SessionLog, "id" | "loggedAt"> & { id?: string },
+  log: Omit<SessionLog, "id" | "loggedAt" | "taskId"> & {
+    id?: string;
+    taskId?: string | null;
+  },
   now: IsoDateTime,
 ): Promise<LocalSessionLog> {
-  const row: LocalSessionLog = { ...log, id: log.id ?? newId(), loggedAt: now };
+  const row: LocalSessionLog = {
+    ...log,
+    id: log.id ?? newId(),
+    taskId: log.taskId ?? null,
+    loggedAt: now,
+  };
   await localDb.transaction("rw", localDb.sessionLogs, localDb.outbox, async () => {
     await localDb.sessionLogs.put(row);
     await enqueue("sessionLogs", "put", row.id, row, now);

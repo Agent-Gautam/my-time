@@ -1409,6 +1409,147 @@ Three costs, all accepted and all one-time:
 
 ---
 
+### D68 — A one-off task is a time-box for one daypart, not a to-do item
+
+**Built.** Requested directly: *"add any task right on today's page, and it might be an
+independent task not related to any goal… done logs it, skipped goes to missed."*
+
+**This runs at PRD §1**, which says the app is *"explicitly not built for… task
+management. This is not a to-do app, and a to-do list is not a degraded version of it."*
+That line is not repealed, and the feature is shaped so it stays true. What makes a
+to-do list a different product is not that items exist — it is that they **persist**:
+they carry a due date, they get re-prioritised, and an unfinished one rolls to tomorrow
+and accumulates. This app's entire spine is the opposite (D20: *"missed sessions die and
+get recorded; catch-up is voluntary, never imposed as debt"*).
+
+So a task here is a **session that belongs to no goal**:
+
+- It is anchored to `(date, daypartId)` exactly like a `PlanSlot`.
+- It carries a fixed time-box exactly like a `Stage` (D12).
+- It is answered **Done** or **Skipped** exactly like a session, and neither is a
+  verdict (D15).
+- **When its daypart ends unanswered, it is missed and it dies there.** It does not
+  reappear tomorrow. That is the same rule `missedForWeek` already applied to slots,
+  reused rather than re-derived.
+- There is no priority, no due date, no project, no ordering, no re-schedule.
+
+Strip any one of those and it becomes the thing PRD §1 refuses. Keep them and it is the
+existing model with a title instead of a goal.
+
+**A new `tasks` table, not a goal + stage.** Modelling a task as a one-cadence goal was
+the cheap route and it is wrong twice over: it would consume the daypart's `activeCap`
+(D60), and it would appear in the goals list, the capacity counts and the "On track"
+summary — a passport renewal reported as a pursuit with a pace. `SessionLog.stageId` is
+also non-null in the frozen `core/types.ts`, so a task cannot borrow the log table
+either. A new table is purely additive (D51).
+
+**`Task` is added to `core/types.ts`, which is otherwise frozen.** Nothing existing
+changed, and **nothing in `core/` reads it** — the scheduler never sees a task, so D42's
+purity and D34's determinism are untouched. It lives there because that file is the
+shared domain contract the Dexie mirror, the Drizzle schema and the sync wire types all
+map to; three private copies would be three chances to drift.
+
+**Mutable, not append-only.** A task is created pending and rewritten once when it is
+answered, so it is LWW on `updatedAt` with a `deletedAt` tombstone — not a union like
+`session_logs`. This is the honest classification: a log is a fact the moment it exists;
+a task is a small piece of state with two possible endings.
+
+**Done tasks count against stated time.** `spentMinutes` on Today now sums done sessions
+*and* done tasks. Tasks never enter the knapsack — `reconcile.ts` is untouched and
+`relayoutWeek` is deliberately **not** called after answering one, since a task was never
+in the plan — but they consume real minutes, and *"1h stated · 1h left"* immediately
+after a 20-minute task would be the app lying about arithmetic it exists to get right.
+
+**Consequences worth knowing:**
+
+- `MissedOccurrence` is now a discriminated union on `source: "session" | "task"`. The
+  discriminant is load-bearing: `/missed` looks a session's name up through
+  `stageId → goalId`, and a task has no stage, so an unconditional lookup rendered every
+  task as *"Deleted goal"*.
+- The Dexie mirror gains a **`version(2)`** block. Editing `version(1)` in place would
+  not create the object store on a device that already opened v1 — i.e. on exactly the
+  installed PWAs this app is for.
+- Tasks are pruned by `pruneHistoryBefore` alongside logs and check-ins, so the pull is
+  floored on them too (`historyFloor`). Prune without the floor and every sync drags the
+  whole history back down.
+- **A future history view must union `tasks` with `session_logs`.** The task row is its
+  own record of what happened; there is no log written for it.
+- **There is deliberately no delete.** A mistyped task is answered *Skipped*, which is
+  the same neutral outcome everything else in this app gets.
+
+---
+
+*(D69 — the sync indicator spinner — lives on `fix/sync-indicator-readable`, a
+separate branch not merged here. The jump from D68 to D70 is deliberate, not a gap:
+D70 was numbered to land after D69 once both branches meet in `main`.)*
+
+---
+
+### D70 — A task can attach to a goal; the log only ever gains a reference, never content
+
+**Built.** Extends D68. Requested directly: a goal's session card gets an optional
+task field; typing a title and tapping Done attaches that task to the goal; leaving
+it empty behaves exactly as before; "Add a task" gains an optional goal picker.
+
+**The D12 tension, and why this doesn't amend it.** An early framing of this request
+(storing the typed text as content directly on the session log) would have reversed
+D12 outright — "never ask what was inside a session" — and was rejected in discussion
+before any code was written. What shipped instead: `SessionLog` gains `taskId: string
+| null`, a **reference**, structurally identical to the `stageId`/`daypartId` it
+already carries. The title itself lives on its own `Task` row (a legitimate object per
+D68), never on the log. **D12 stands exactly as written** — the log still records only
+status/minutes/date/who, never content. No amendment needed; this decision exists
+because it's a real schema change to a frozen file and to sync, not because anything
+was reversed.
+
+**`Task.stageId: string | null`** — attachment is by stage, not goal, matching
+`SessionLog`/`Checkpoint` everywhere else in this schema; a goal is reached through
+its stage, and D19b makes one stage the ordinary case. `null` is the exact D68 stray
+task, unchanged.
+
+**Marking a stage-linked task Done also writes a paired voluntary session log**
+(`setTaskStatus`, `db/local/mutations.ts`) — so an attached task actually counts
+toward that goal's cadence/pace, the same credit a manually-logged catch-up session
+gets (D20), rather than only toward the task's own history. The log's `minutes` is
+**the task's own stated duration**, credited as-is — reversed from this decision's
+first draft, which fixed it to the stage's `sessionMinutes` on a literal reading of
+D12 ("time-boxes, not contents… fixed regardless of actual content"). Live use showed
+that reading conflated two different things: D12 fixes the box of a *planned session*
+so its length can't be renegotiated by *what happened inside it*; a voluntary task the
+user explicitly time-boxed themselves is the user stating their own duration, not
+content describing a fixed box. Crediting anything other than what they said they
+spent is the actual violation of the spirit here. **Marking it Skipped does not write
+a log** — matching the fact that a voluntary session has no "skip" concept today:
+nothing was scheduled here to skip, so there's nothing to record as missed.
+
+**Known limitation, named rather than engineered around.** Unlike the voluntary
+catch-up section on Today, which is gated on `maxPerWeek`/`minRestDays` *before* a
+candidate ever renders, a task attached to a goal has no such gate at creation. Several
+tasks attached to one goal, all marked Done, can produce more voluntary logs in a week
+than `maxPerWeek` would otherwise allow. Not fixed in this pass.
+
+**Goal detail's Session history interleaves, rather than a separate section.** A
+`"done"` attached task always has a paired log by construction above — that log is
+what renders, with the task's title shown inline via the `taskId` lookup. Only a
+`"skipped"` attached task has no log at all, so it's the one case rendered as its own
+row, merge-sorted into the same list by date (`historyPage`,
+`features/goals/goal-detail/lib.ts`). Simplified from the original two-cursor
+merge-pagination sketch: a single goal's attached tasks are read once, bounded
+(`getTasksForStage`, capped at 200) rather than kept paginated in lockstep with the
+growing `session_logs` stream — D47's concern is a table that grows without bound
+overall, and one goal's own attached tasks don't.
+
+**Schema, additive throughout (D51):** `core/types.ts` gains the two nullable fields
+above; Dexie gets a third version block (`version(3)`, widening `tasks`' indexes to
+`[stageId+date]` — never edit a shipped version block, same reason as D68's
+`version(2)`); Postgres gets migration `0004_goal_attached_tasks.sql` (two nullable
+FK columns, `session_logs.task_id` → `tasks.id` and `tasks.stage_id` → `stages.id`,
+no cascade on either — nothing hard-deletes a task or a stage today, so this is the
+same dormant-path convention the rest of the schema already uses). **Not applied to
+Supabase** — left for the user, same as `0003` was.
+
+---
+
 ## Open questions
 
 - ~~O1 — Planning horizon~~ → resolved by **D16**.

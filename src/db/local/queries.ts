@@ -18,6 +18,7 @@ import {
   type LocalPlanWeek,
   type LocalSessionLog,
   type LocalStage,
+  type LocalTask,
   type OutboxRow,
   type SyncedTable,
 } from "./schema";
@@ -307,6 +308,57 @@ export async function getLatestCheckIn(
 }
 
 // ---------------------------------------------------------------------------
+// One-off tasks (D68) — mutable, and grows without bound
+// ---------------------------------------------------------------------------
+//
+// Soft-deleted rows are filtered in JS (IndexedDB cannot index null), but unlike
+// `dayparts`/`goals`/`stages` this happens *after* an indexed range rather than after
+// a full read — the range is what keeps it bounded.
+
+/** Every task anchored to one daypart occurrence. What Today renders. */
+export async function getTasksForDaypart(
+  date: IsoDate,
+  daypartId: string,
+): Promise<LocalTask[]> {
+  const rows = await localDb.tasks
+    .where("[date+daypartId]")
+    .equals([date, daypartId])
+    .toArray();
+  return alive(rows).sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+}
+
+/** Inclusive date range — the /missed week scan reads this. */
+export async function getTasksBetween(from: IsoDate, to: IsoDate): Promise<LocalTask[]> {
+  return alive(await localDb.tasks.where("date").between(from, to, true, true).toArray());
+}
+
+/**
+ * One page of a stage's attached tasks, newest first — the `[stageId+date]` keyset
+ * pagination cursor (D70), same shape as `getSessionLogPage`'s `[date+id]` cursor.
+ * Backs the goal-detail history merge; never a full read of a growing table (D47).
+ */
+/**
+ * Every task attached to one stage, newest first, capped generously (default 200).
+ * Not keyset-paginated like `sessionLogs` — this reads through the `[stageId+date]`
+ * index, which already narrows to one goal's own tasks rather than a whole growing
+ * table (D47's concern is a table that grows without bound; a single goal's attached
+ * tasks don't). Backs the goal-detail history merge (D70).
+ */
+export function getTasksForStage(
+  stageId: string,
+  options: { limit?: number } = {},
+): Promise<LocalTask[]> {
+  const { limit = 200 } = options;
+  return localDb.tasks
+    .where("[stageId+date]")
+    .between([stageId, MIN_KEY], [stageId, MAX_KEY], true, true)
+    .reverse()
+    .limit(limit)
+    .toArray()
+    .then(alive);
+}
+
+// ---------------------------------------------------------------------------
 // The plan — synced atomically per week (D45)
 // ---------------------------------------------------------------------------
 
@@ -421,9 +473,13 @@ export async function pruneHistoryBefore(before: IsoDate): Promise<void> {
     "rw",
     localDb.sessionLogs,
     localDb.checkIns,
+    localDb.tasks,
     async () => {
       await localDb.sessionLogs.where("date").below(before).delete();
       await localDb.checkIns.where("date").below(before).delete();
+      // Tasks are dated and grow the same way (D68). Pruned here means the pull
+      // must be floored on them too, or the next sync drags them all back down.
+      await localDb.tasks.where("date").below(before).delete();
     },
   );
 }

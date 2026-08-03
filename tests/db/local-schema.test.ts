@@ -29,6 +29,12 @@ describe("Dexie local schema", () => {
     );
   });
 
+  it("indexes tasks for the occurrence read, the week scan, and the per-stage history (D68, D70)", () => {
+    expect(indexNames("tasks")).toEqual(
+      expect.arrayContaining(["[date+daypartId]", "date", "[stageId+date]", "stageId"]),
+    );
+  });
+
   it("indexes plan_slots by week and by daypart (D45)", () => {
     expect(indexNames("planSlots")).toEqual(
       expect.arrayContaining(["[weekStart+date]", "[date+daypartId]", "planWeekId"]),

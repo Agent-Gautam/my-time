@@ -13,7 +13,9 @@
 //   append-only  sessionLogs, checkpoints, checkIns   union — insert if absent, never
 //                                                     overwrite. They are facts (D32).
 //   mutable      users, dayparts, goals, stages,      last-write-wins on `updatedAt`
-//                pushSubscriptions
+//                tasks, pushSubscriptions             (a task is created pending and
+//                                                     answered later, so it is rewritten
+//                                                     once — not a fact like a log, D68)
 //   the plan     planWeeks (+ its slots)              LWW wholesale per week (D45)
 
 import type { IsoDateTime } from "@/core/types";
