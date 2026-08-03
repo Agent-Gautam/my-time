@@ -2052,3 +2052,251 @@ and `validate()` never fires. The browser's generic bubble would have replaced D
 one explanatory sentence on exactly the stored rows the decision exists to explain (an
 existing max of 3 under a cadence of 5; a legacy 0). `min` is back to 0 and the message
 is `validate()`'s job, which is how the rest of this form already works.
+
+---
+
+## Session — one-off tasks on Today (D68) + the test-data rule
+
+Two asks, both done on `main` (working tree, **not committed and not pushed**).
+
+### 1. Test data is borrowed, never left behind — `CLAUDE.md` "Working rules"
+
+New standing rule for every session: data a session creates in the app to try something
+out gets removed before that session ends. Three specifics are called out because each
+is a real trap — `dropGoal` **soft**-deletes (D48) and is therefore not removal; anything
+that reached Supabase through the outbox survives clearing IndexedDB and has to be
+deleted there in FK order; and whatever you did goes in one line here.
+
+**Outstanding from earlier sessions, under the new rule:** Wave 2b hand-seeded a `Gym`
+goal (30 min, night-only, `cadenceCount: 7`, scope 10 chapters) to verify the check-in
+loop, and it was never recorded as removed. If it is still in Supabase or in a browser
+profile, it should go. Wave 2c did clean up after itself (its test push subscription was
+deleted) — that is the standard.
+
+### 2. One-off tasks on Today — **D68**
+
+*"Add any task right on today's page… not related to any goal… Done logs it, Skipped
+goes to missed."* Built end to end, including sync.
+
+**The product tension was real and is addressed in D68 rather than glossed:** PRD §1 says
+this is not a to-do app. What makes a to-do list a different product is that its items
+**persist** — due dates, re-prioritisation, an unfinished item rolling to tomorrow. So a
+task here is a *session that belongs to no goal*: anchored to `(date, daypartId)` like a
+plan slot, a fixed time-box like a stage, answered Done/Skipped like a session, and
+**missed and dead when its daypart ends unanswered** (D20). No priority, no due date, no
+carry-forward, no delete (a mistyped task is answered *Skipped*). PRD §1 now carries a
+pointer to D68 saying the stance is not repealed.
+
+**Rejected: modelling a task as a goal + stage.** It would consume the daypart's
+`activeCap` (D60) and show up in the goals list, the capacity counts and "On track" — a
+passport renewal reported as a pursuit with a pace. `SessionLog.stageId` is also non-null
+in the frozen `core/types.ts`, so borrowing the log table was not open either.
+
+**Files touched**
+
+- `core/types.ts` — **`Task` + `TaskStatus` added to the frozen file.** Purely additive;
+  nothing existing changed and **nothing in `core/` reads it** — the scheduler never sees
+  a task, so D42/D34 are untouched. It lives there because that file is the contract the
+  Dexie mirror, the Drizzle schema and the wire types all map to.
+- `db/local/schema.ts` — `LocalTask`, `tasks` in `SYNCED_TABLES`, and a **`version(2)`**
+  block. Editing `version(1)` in place would not create the store on a device that already
+  opened v1 — i.e. on exactly the installed PWAs this app targets.
+- `db/local/queries.ts` — `getTasksForDaypart`, `getTasksBetween`; `pruneHistoryBefore`
+  now covers tasks.
+- `db/local/mutations.ts` — `putTask`, `setTaskStatus` (row + outbox in one `rw`, as
+  always).
+- `db/server/schema.ts` + `drizzle/0003_one_off_tasks.sql` — the `tasks` table. **Not
+  applied to Supabase** (see below). No FK to goals or stages, deliberately: a nullable
+  one would invite the scheduler to start reading it.
+- `sync/protocol.ts`, `sync/pull.ts`, `sync/merge.ts`, `app/api/sync/route.ts` — the full
+  path. Classified **mutable**, not append-only: a task is created pending and rewritten
+  once when answered, so LWW on `updatedAt` is what resolves two devices answering it.
+  Pull is **floored on `historyFloor`** because prune deletes tasks locally; without that
+  every sync drags the whole history back down. Applying a pulled task deliberately does
+  **not** set `inputsChanged` — a task is not a layout input, so it must not trigger a
+  relayout (D62).
+- `features/checkin/task-list.tsx` (new) + `checkin-view.tsx` — the Today section.
+- `features/checkin/lib.ts` + `app/missed/page.tsx` — missed detection.
+
+**Three things that will bite whoever touches this next**
+
+1. **`MissedOccurrence` is now a discriminated union on `source: "session" | "task"`.**
+   `/missed` resolves a session's name through `stageId → goalId`; a task has no stage,
+   so before the discriminant existed every task would have rendered as *"Deleted goal"*.
+2. **Done tasks count into `spentMinutes` on Today.** They never enter the knapsack —
+   `core/reconcile.ts` is untouched and `relayoutWeek` is deliberately **not** called
+   after answering one, since a task was never in the plan — but they consume real
+   minutes, and *"1h stated · 1h left"* right after a 20-minute task would be the app
+   lying about the arithmetic it exists to get right.
+3. **A future history view must union `tasks` with `session_logs`.** No log row is
+   written for a task; the task row is its own record.
+
+**Gates:** `lint` clean, **211 tests** (200 + 11), `build` clean. New tests:
+`tests/features/tasks.test.ts` (10, against `fake-indexeddb` per D55 — answered in place
+not appended, still-running daypart is not missed, ended daypart is, skipped surfaces,
+done never does, soft-delete hidden from both surfaces, prune) and one index assertion in
+`tests/db/local-schema.test.ts`.
+
+**Two known test gaps, named rather than left implied by "211 pass":**
+
+- **`tests/sync/{pull,push}.test.ts` do not exercise tasks.** CLAUDE.md says the pure
+  core is what's worth testing, so this isn't required — but sync *is* a tested
+  subsystem and a table was added to it. `src/sync/push.ts` was read and confirmed
+  fully table-agnostic (no allowlist, no per-table branch), so nothing there can drop
+  a `tasks` row; the untested part is the pull/apply half.
+- **The v1 → v2 Dexie upgrade is unverified, and the tests structurally cannot verify
+  it.** `fake-indexeddb` builds the database at v2 from scratch; it never opens a v1
+  and upgrades it — which is the exact failure `version(2)` exists to prevent. See the
+  browser pass below.
+
+**Not done, and needed before this works in production:**
+
+- **`drizzle/0003_one_off_tasks.sql` has not been applied to Supabase.** Additive
+  (one `CREATE TABLE` + two FKs + three indexes), but it is a write to the live database
+  and was left for the user. Until it is applied, every task push is refused. Nothing is
+  lost and **sync does not wedge** — `route.ts` applies changes one at a time and
+  isolates failures on purpose, so every other table keeps draining and the task row
+  retries — but tasks simply never reach the server. **Apply the migration before
+  pushing this branch.**
+- **No browser verification.** Type-checked, linted, tested and built only. A click
+  through Today (add a task, Done, Skipped, reload, check `/missed`) is still owed —
+  and under the new rule, whatever gets added in that pass gets removed afterwards.
+  **Do that pass in a browser profile that already holds the v1 Dexie database** (any
+  profile used before today), not a fresh one: a fresh profile creates v2 directly and
+  proves nothing about the upgrade. What to look for — the app opens with no
+  `VersionError`/`UpgradeError` in the console, and Today renders an empty task section
+  rather than throwing on a missing `tasks` store.
+
+---
+
+## Session — goal-attached tasks (D70), extending the earlier tasks work (D68)
+
+Same working tree as the previous entry, same session. **On `main`, not committed,
+not pushed.**
+
+Extended one-off tasks (D68) so a task can optionally attach to a goal:
+
+1. **Packed session card on Today** gets an inline "attach a task" text field. Typing
+   a title and tapping **Done** creates a task attached to that goal's stage alongside
+   the normal session log. Empty field + Done, or Skipped regardless of what's typed,
+   are byte-identical to pre-D70 behaviour.
+2. **"Add a task"** gains an optional goal picker. Unset = the exact D68 stray path.
+3. **Marking a goal-attached task Done** (from the Tasks section) also writes a
+   paired **voluntary** session log — so it counts toward that goal's cadence/pace,
+   not just its own task history. Marking it **Skipped** does not — matches the fact
+   that voluntary sessions have no "skip" concept today.
+4. **Goal detail's Session history interleaves** attached tasks into the same list
+   rather than a separate section — a done attached task shows via its paired log
+   (title looked up through `taskId`); a skipped one has no log, so it's the one case
+   rendered as its own row.
+
+**The D12 question, worked through explicitly rather than glossed.** The first framing
+discussed (storing the typed text as content directly on the session log) would have
+reversed D12 — *"never ask what was inside a session"* — outright, and was set aside
+before any code was written. What shipped instead: `SessionLog.taskId: string | null`
+is a **reference**, the same kind `stageId`/`daypartId` already are — the actual title
+lives on its own `Task` row. **D12 is untouched.** Recorded as **D70** with the full
+reasoning; PRD §1 and Architecture.md's table both point at it alongside D68.
+
+**One in-flight simplification from the original plan, worth flagging:** the plan
+sketched a full two-cursor merge-pagination between the growing `session_logs` stream
+and a paginated `tasks`-by-stage stream. Built simpler instead — `getTasksForStage`
+reads a single goal's attached tasks **once, bounded** (cap 200, not paginated), since
+D47's "never unbounded" concern is about a table that grows without limit *overall*,
+and one goal's own attached tasks don't. The session-log side stays properly
+keyset-paginated as it always was. Documented in D70 rather than left as an unexplained
+deviation from the approved plan.
+
+**Files touched:** `core/types.ts` (`Task.stageId`, `SessionLog.taskId`),
+`db/local/schema.ts` (**`version(3)`** — a third block, `version(1)`/`version(2)`
+untouched), `db/local/queries.ts` (`getTasksForStage`), `db/local/mutations.ts`
+(`putTask`/`logSession` gain the new optional fields; `setTaskStatus` now reads the
+stage and conditionally pairs a voluntary log), `db/server/schema.ts` +
+**`drizzle/0004_goal_attached_tasks.sql`** (two nullable FK columns, no cascade on
+either), `sync/protocol.ts` (wire types pick the new fields up automatically —
+`WireTask = Task & WireMutable`, `WireSessionLog = SessionLog`), `app/api/sync/route.ts`
+(push/pull column lists on both tables), `features/checkin/session-card.tsx` (inline
+field), `checkin-view.tsx` (`logSlot` creates the task before the log, in outbox order,
+so the FK is always satisfied server-side), `features/checkin/task-list.tsx` (goal
+picker + subtitle), `features/goals/goal-detail/{lib,session-history}.tsx` (the merge).
+
+**Test fixture fallout, mechanical:** making `SessionLog.taskId` required broke every
+test that builds a `SessionLog` literal directly rather than through `logSession` —
+`tests/core/{layout,pace,score}.test.ts` and `tests/sync/{engine,pull}.test.ts` each
+needed `taskId: null` added to their fixtures. Caught immediately by `tsc --noEmit`,
+not a runtime surprise.
+
+**Numbering correction worth remembering:** D69 was already taken (the sync indicator,
+from an earlier session — `src/components/sync-status.tsx`) by the time this feature
+was built. The new decision is **D70**, not D69; every reference in the newly-touched
+files was renamed before this entry was written. If a future session sees "D69" cited
+anywhere outside `sync-status.tsx`, that's a leftover from this correction that was
+missed — check `docs/DECISIONS.md`'s actual heading, not the number a diff happens to
+use.
+
+**Gates:** `tsc --noEmit`, `lint`, **216 tests** (211 + 5: 4 new stage-linked mutation
+tests, 1 new goal-detail merge test — plus 1 schema-index assertion extended, not a new
+test), `build` all clean.
+
+**Not done, carried forward from the same standing notes as last time:**
+
+- **`drizzle/0004_goal_attached_tasks.sql` is not applied to Supabase**, same rule as
+  `0003` — additive, safe, but a write to the live database, left for the user. Apply
+  both `0003` and `0004` together before pushing this branch; `0004` depends on `0003`'s
+  `tasks` table already existing.
+- **No browser verification of this round either.** Type-checked/linted/tested/built
+  only. When the browser pass happens (same profile-with-existing-v1/v2-database note
+  as before applies here too, now through `version(3)`), also check: attaching a task
+  via a session card's Done produces both a task and a linked log; attaching via "Add a
+  task" + a goal, then marking it Done, produces a voluntary log on that goal's page;
+  marking one Skipped does not. Per the standing test-data rule, remove whatever gets
+  created during that pass before the session ends.
+- **The `maxPerWeek` gating gap is real and intentionally unfixed** — see D70's own
+  "known limitation" paragraph. Worth a look if `maxPerWeek` behaviour is ever reported
+  as wrong after this ships.
+
+---
+
+## Session — D70 follow-up: a real bug + a design reversal, both from live use
+
+Same tree, same session as the D70 entry above. Not committed, not pushed.
+
+**Reported by the user immediately after building D70:** attached a task to the Yoga
+goal, marked it Done. It showed up correctly in Today's Tasks section. On the goal's
+detail page, no session appeared to be connected to it — instead a 30-minute session
+sat there with no visible link, while the task itself read 15 minutes, and the
+mismatch read as broken.
+
+**Two separate things, both now fixed:**
+
+1. **Real bug.** `historyPage`'s (`features/goals/goal-detail/lib.ts`) task-title
+   lookup was built only from the *skipped* tasks list passed in — but a **done**
+   attached task (the common case, since it's the one with a paired log) was never in
+   that list, so its title could never resolve. The session log rendered with nothing
+   connecting it back to the task. Fixed: the lookup now takes every task attached to
+   the stage, not just the skipped ones; only the *standalone-row* decision (does this
+   task get its own line, or does a paired log already represent it) stays scoped to
+   skipped tasks. `session-history.tsx` now fetches via `getTasksForStage` unfiltered.
+   New regression test: *"annotates a done attached task's paired session log with its
+   title — the actual bug reported."*
+
+2. **Design reversal, asked and confirmed, not assumed.** D70's first draft fixed the
+   paired voluntary log's `minutes` to the stage's `sessionMinutes` (the goal's usual
+   box), reasoning from D12's "time-boxes, not contents." Live use showed that reading
+   was wrong: D12 fixes a *planned* session's box so it can't be renegotiated by *what
+   happened inside it* — it was never about overriding a duration the user explicitly
+   stated for a voluntary, self-timed task. Asked the user directly which behaviour
+   they wanted; they chose **the task's own duration**, credited as-is.
+   `setTaskStatus` (`db/local/mutations.ts`) no longer reads the stage at all — it only
+   checks `stageId` truthiness to decide *whether* to log, and passes `row.minutes`
+   straight through. D70 in `DECISIONS.md` rewritten to record the reversal and why,
+   rather than silently editing over the original reasoning.
+
+**Gates:** `tsc --noEmit`, `lint`, **217 tests** (216 + 1 new regression test; two
+existing tests' assertions updated from `st.sessionMinutes` to the task's own literal
+minutes, since that's now the actually-asserted behaviour), `build` — all clean.
+
+**Still not done**, unchanged from before: `drizzle/0003`/`0004` not applied to
+Supabase; no browser walkthrough yet (this session's whole feedback loop happened
+through your own manual testing, which is exactly the kind of check a browser pass
+would also need to repeat once the migrations are live).

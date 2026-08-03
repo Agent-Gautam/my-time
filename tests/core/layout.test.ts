@@ -243,7 +243,7 @@ describe("layoutWeek — one session per stage per date", () => {
     const st = stage({ cadenceCount: 7, eligibleDayparts: ["morning"] });
     const thursday = "2026-07-30";
     const history: SessionLog[] = [
-      { id: "h1", stageId: st.id, date: thursday, daypartId: "morning", minutes: 30, status: "done", source: "planned", loggedAt: `${thursday}T08:00:00` },
+      { id: "h1", stageId: st.id, date: thursday, daypartId: "morning", minutes: 30, status: "done", source: "planned", loggedAt: `${thursday}T08:00:00`, taskId: null },
     ];
     // The plan as it stood before the session was logged — it had a Thursday slot.
     const priorPlan = run({ stages: [st], now: `${thursday}T22:00:00` });
@@ -258,7 +258,7 @@ describe("layoutWeek — one session per stage per date", () => {
     const thursday = "2026-07-30";
     const now = `${thursday}T22:00:00`;
     const history: SessionLog[] = [
-      { id: "h1", stageId: st.id, date: thursday, daypartId: "morning", minutes: 30, status: "done", source: "planned", loggedAt: `${thursday}T08:00:00` },
+      { id: "h1", stageId: st.id, date: thursday, daypartId: "morning", minutes: 30, status: "done", source: "planned", loggedAt: `${thursday}T08:00:00`, taskId: null },
     ];
     const priorPlan = run({ stages: [st], now });
 
@@ -308,8 +308,8 @@ describe("layoutWeek — general sanity", () => {
   it("does not exceed the weekly requirement even when history already covers most of it", () => {
     const st = stage({ cadenceCount: 3 });
     const history: SessionLog[] = [
-      { id: "h1", stageId: st.id, date: "2026-07-27", daypartId: "morning", minutes: 30, status: "done", source: "planned", loggedAt: "2026-07-27T08:00:00.000Z" },
-      { id: "h2", stageId: st.id, date: "2026-07-28", daypartId: "morning", minutes: 30, status: "done", source: "voluntary", loggedAt: "2026-07-28T08:00:00.000Z" },
+      { id: "h1", stageId: st.id, date: "2026-07-27", daypartId: "morning", minutes: 30, status: "done", source: "planned", loggedAt: "2026-07-27T08:00:00.000Z", taskId: null },
+      { id: "h2", stageId: st.id, date: "2026-07-28", daypartId: "morning", minutes: 30, status: "done", source: "voluntary", loggedAt: "2026-07-28T08:00:00.000Z", taskId: null },
     ];
     const result = run({ stages: [st], history });
     expect(result.filter((s) => s.stageId === st.id)).toHaveLength(1);

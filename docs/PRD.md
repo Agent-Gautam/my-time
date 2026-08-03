@@ -51,6 +51,12 @@ fitness habit alongside study, anyone whose problem is allocation rather than me
 Explicitly **not** built for: teams, shared goals, or task management. This is not a
 to-do app, and a to-do list is not a degraded version of it.
 
+*(One-off tasks on Today, added later, do not repeal this — see **D68**, extended by
+**D70** to optionally attach a task to a goal. A task there is
+a time-box for one daypart that dies at the end of it, with no due date, no priority and
+no carry-forward. What makes a to-do list a different product is that its items persist;
+these don't.)*
+
 ## 4. Principles
 
 These are product stances, not implementation notes. They decide arguments.

@@ -59,6 +59,13 @@ export interface SessionLog {
   status: SessionStatus;
   source: SessionSource; // voluntary credits catch-up without imposing debt (D20)
   loggedAt: IsoDateTime;
+  /**
+   * The task created alongside this log, if any (D70) — a reference, like `stageId`
+   * or `daypartId` above, never content. The task's own title is what the user typed;
+   * this field only points at it. Set once at creation, never backfilled — compatible
+   * with this table being append-only (D32).
+   */
+  taskId: string | null;
 }
 
 export interface Checkpoint {
@@ -83,4 +90,41 @@ export interface CheckIn {
   availableMinutes: number;
   date: IsoDate;
   checkedInAt: IsoDateTime;
+}
+
+export type TaskStatus = "pending" | "done" | "skipped";
+
+/**
+ * A one-off time-box for one daypart (D68) — belonging to no goal, or optionally
+ * attached to one via `stageId` (D70).
+ *
+ * Additive to this otherwise-frozen file: nothing above changed, and nothing in
+ * `core/` reads this — the scheduler never sees a task, attached or not. It lives here
+ * because this is the shared domain contract that the Dexie mirror, the Drizzle schema
+ * and the sync wire types all map to, and three private copies would be three chances
+ * to drift.
+ *
+ * Deliberately **not** a to-do item (PRD §1): it is anchored to `(date, daypartId)`
+ * exactly like a `PlanSlot`, it carries a time-box exactly like a `Stage`, it is
+ * answered done/skipped exactly like a `SessionLog` — and when its daypart ends
+ * unresolved it is missed and dies there (D20). No priority, no due date, no carry
+ * forward, no project.
+ */
+export interface Task {
+  id: string;
+  title: string;
+  minutes: number; // fixed time-box, same as a session (D12)
+  date: IsoDate; // the daypart occurrence's own date (D53), never `dateOnly(now)`
+  daypartId: string;
+  /**
+   * The goal's stage this task is attached to, or `null` for a stray task (D68 vs
+   * D70). Attachment is by stage, not goal, matching `SessionLog`/`Checkpoint` — a
+   * goal is reached through its stage everywhere else in this schema, and D19b makes
+   * one stage the ordinary case.
+   */
+  stageId: string | null;
+  status: TaskStatus;
+  /** When done/skipped was tapped. `null` while pending. */
+  resolvedAt: IsoDateTime | null;
+  createdAt: IsoDateTime;
 }

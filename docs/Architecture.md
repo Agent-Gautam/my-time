@@ -164,6 +164,7 @@ Two classes of table:
 | `session_logs` | synced, **append-only** | What actually happened. Facts. |
 | `checkpoints` | synced, **append-only** | Coarse progress — "chapter 7" (D13) |
 | `check_ins` | synced, **append-only** | Daypart + available minutes stated by user |
+| `tasks` | synced | One-off time-boxes, optionally attached to a goal's stage (D68, D70). Mutable — created pending, answered once |
 | `push_subscriptions` | synced | Web Push endpoints per device |
 | `plan_slots` | **synced, atomic per week** | The week's placements. Derived, but synced — see §5.2 (D45) |
 | `outbox` | **local-only** | Pending writes awaiting sync |
@@ -228,7 +229,7 @@ syncing (D35):
 | Data | Shape | Resolution |
 |---|---|---|
 | `session_logs`, `checkpoints`, `check_ins` | append-only | **union** — no conflict possible |
-| `goals`, `stages`, `dayparts`, `settings` | small, rare edits, single user | **last-write-wins** on `updated_at` |
+| `goals`, `stages`, `dayparts`, `tasks`, `settings` | small, rare edits, single user | **last-write-wins** on `updated_at` |
 | `plan_slots` | derived, but path-dependent (§5.2) | **LWW per week, atomic** (D45) |
 
 So: an outbox queue on the client, LWW on the server. Roughly two endpoints.

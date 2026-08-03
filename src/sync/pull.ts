@@ -7,7 +7,7 @@
 //                 Insert if absent. **Never overwrite.** These are facts (D32) — a
 //                 pull that rewrote a logged session would be the app editing history.
 //
-//   mutable       users · dayparts · goals · stages · pushSubscriptions
+//   mutable       users · dayparts · goals · stages · tasks · pushSubscriptions
 //                 Last-write-wins on `updatedAt`, compared as strings (D53). A local
 //                 row edited more recently than the server's copy survives the pull,
 //                 which is what makes an unsynced local edit safe.
@@ -33,6 +33,7 @@ import {
   type LocalPlanSlot,
   type LocalSessionLog,
   type LocalStage,
+  type LocalTask,
   type LocalUser,
 } from "@/db/local/schema";
 import type { Table } from "dexie";
@@ -48,6 +49,7 @@ import type {
   WirePlanWeekBundle,
   WireSessionLog,
   WireStage,
+  WireTask,
   WireUser,
 } from "./protocol";
 
@@ -82,6 +84,11 @@ export async function applyPull(pulled: PulledRows): Promise<ApplyOutcome> {
   const goals = await applyMutable(localDb.goals, pulled.goals as LocalGoal[]);
   const stages = await applyMutable(localDb.stages, pulled.stages as LocalStage[]);
   applied += dayparts + goals + stages;
+
+  // Mutable, and deliberately not counted as a scheduling input: the plan does not
+  // contain tasks, so a task arriving from the other device must not trigger a
+  // relayout (D62's narrowness, D68's "the scheduler never sees a task").
+  applied += await applyMutable(localDb.tasks, pulled.tasks as LocalTask[]);
 
   applied += await applyMutable(localDb.pushSubscriptions, pulled.pushSubscriptions);
 
@@ -217,5 +224,6 @@ export type WireRowsMatchLocalRows = [
   MustExtend<LocalSessionLog, WireSessionLog>,
   MustExtend<LocalCheckpoint, WireCheckpoint>,
   MustExtend<LocalCheckIn, WireCheckIn>,
+  MustExtend<LocalTask, WireTask>,
   MustExtend<LocalPlanSlot, WirePlanSlot>,
 ];

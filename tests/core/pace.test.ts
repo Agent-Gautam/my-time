@@ -33,6 +33,7 @@ function log(overrides: Partial<SessionLog> = {}): SessionLog {
     status: "done",
     source: "planned",
     loggedAt: "2026-07-27T08:00:00.000Z",
+    taskId: null,
     ...overrides,
   };
 }

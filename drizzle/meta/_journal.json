@@ -22,6 +22,20 @@
       "when": 1785431834027,
       "tag": "0002_deterministic_ids_to_text",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785608530992,
+      "tag": "0003_one_off_tasks",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785777736226,
+      "tag": "0004_goal_attached_tasks",
+      "breakpoints": true
     }
   ]
 }

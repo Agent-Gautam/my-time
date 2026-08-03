@@ -41,8 +41,9 @@ import {
   getLatestCheckIn,
   getLatestCheckpoint,
   getSessionLogsForDaypart,
+  getTasksForDaypart,
 } from "@/db/local/queries";
-import { logSession, putCheckIn } from "@/db/local/mutations";
+import { logSession, putCheckIn, putTask } from "@/db/local/mutations";
 import type { LocalStage } from "@/db/local/schema";
 import { reconcileNow, relayoutWeek, type ReconciledSlot } from "@/features/plan/planner";
 
@@ -50,6 +51,7 @@ import { AdjustToday } from "./adjust-today";
 import { CheckpointPrompt, type CheckpointTarget } from "./checkpoint-prompt";
 import { GoalStatusRow } from "./goal-status-row";
 import { SessionCard } from "./session-card";
+import { TaskList } from "./task-list";
 import {
   capitalize,
   formatClockTime,
@@ -119,17 +121,25 @@ export function CheckinView() {
   const statedMinutes =
     clearedFor === occurrenceKey ? null : (storedCheckIn?.availableMinutes ?? null);
 
-  // Time already spent in this daypart. Derived from the logs rather than decremented
-  // in state: reload-safe, and it cannot drift from what was actually recorded. Only
-  // `done` counts — skipping a box must not shrink what is left to pack into the rest
-  // of the daypart.
+  // Time already spent in this daypart. Derived from what was recorded rather than
+  // decremented in state: reload-safe, and it cannot drift from what actually
+  // happened. Only `done` counts — skipping a box must not shrink what is left to
+  // pack into the rest of the daypart.
+  //
+  // **Done one-off tasks count too (D68).** They are not in the plan and never enter
+  // the knapsack, but they consume real minutes out of what the user said they had;
+  // leaving them out would show "1h stated · 1h left" straight after a 20-minute task.
   const spentMinutes = useLiveQuery(
     () =>
       occurrenceDate && selectedDaypart
-        ? getSessionLogsForDaypart(occurrenceDate, selectedDaypart.id).then((logs) =>
-            logs
-              .filter((log) => log.status === "done")
-              .reduce((sum, log) => sum + log.minutes, 0),
+        ? Promise.all([
+            getSessionLogsForDaypart(occurrenceDate, selectedDaypart.id),
+            getTasksForDaypart(occurrenceDate, selectedDaypart.id),
+          ]).then(([logs, tasks]) =>
+            [
+              ...logs.filter((log) => log.status === "done"),
+              ...tasks.filter((task) => task.status === "done"),
+            ].reduce((sum, row) => sum + row.minutes, 0),
           )
         : undefined,
     [occurrenceDate, selectedDaypart?.id],
@@ -180,13 +190,37 @@ export function CheckinView() {
 
   // No longer gated on a check-in existing: logging a planned session is the whole
   // point of the screen and must work the moment it renders (D63).
-  const logSlot = async (slot: ReconciledSlot, status: "done" | "skipped") => {
+  //
+  // **`taskTitle` (D70).** Only acted on when `status === "done"` and non-empty — the
+  // Skipped path and an empty field on Done are byte-identical to pre-D70 behaviour.
+  // The task is created *before* the log so the log's `taskId` reference is always
+  // valid, and so the outbox enqueues the task first — the server applies changes in
+  // `seq` order, so the FK it references is always already there (D70).
+  const logSlot = async (slot: ReconciledSlot, status: "done" | "skipped", taskTitle?: string) => {
     if (!selectedDaypart) return;
 
     setPendingSlotIds((prev) => new Set(prev).add(slot.slot.id));
     try {
       const now = localNow();
       const date = daypartDate(selectedDaypart, now);
+
+      let taskId: string | null = null;
+      if (status === "done" && taskTitle?.trim()) {
+        const task = await putTask(
+          {
+            title: taskTitle.trim(),
+            minutes: slot.slot.minutes, // the session's own box, not a separate entry
+            date,
+            daypartId: selectedDaypart.id,
+            stageId: slot.stage.id,
+            status: "done",
+            resolvedAt: now,
+          },
+          now,
+        );
+        taskId = task.id;
+      }
+
       await logSession(
         {
           stageId: slot.stage.id,
@@ -195,6 +229,7 @@ export function CheckinView() {
           minutes: slot.slot.minutes,
           status,
           source: "planned",
+          taskId,
         },
         now,
       );
@@ -321,7 +356,7 @@ export function CheckinView() {
             key={slot.slot.id}
             slot={slot}
             pending={pendingSlotIds.has(slot.slot.id)}
-            onLog={(status) => logSlot(slot, status)}
+            onLog={(status, taskTitle) => logSlot(slot, status, taskTitle)}
           />
         ))}
 
@@ -350,6 +385,12 @@ export function CheckinView() {
           </div>
         )}
       </section>
+
+      {/* One-off tasks (D68): a time-box that belongs to no goal, answered the same
+          two ways a session is, and gone at the end of the daypart either way. */}
+      {selectedDaypart && occurrenceDate && (
+        <TaskList daypart={selectedDaypart} occurrenceDate={occurrenceDate} />
+      )}
 
       {/* Voluntary catch-up (Architecture.md §9.3, D20): do a session on your own,
           any time, and it credits against the ideal line without ever being owed. */}

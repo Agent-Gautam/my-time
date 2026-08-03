@@ -14,6 +14,7 @@ import {
   getPlanSlotsForWeek,
   getSessionLogsBetween,
   getSessionLogsForStage,
+  getTasksBetween,
   LOCAL_HISTORY_WINDOW_DAYS,
 } from "@/db/local/queries";
 import type { LocalGoal, LocalStage } from "@/db/local/schema";
@@ -201,17 +202,39 @@ function diffDaysBetweenDateTimes(a: IsoDateTime, b: IsoDateTime): number {
 // also shown, since PRD §6.6 treats both as the same neutral outcome; a stage
 // only ever appears in one or the other; `loggedDates` below is what keeps them
 // from double-counting the same (stageId, date).
+//
+// One-off tasks (D68) are missed on the identical rule and appear here too, tagged
+// `source: "task"`. That discriminant is load-bearing: a task has no stage, so a
+// caller that reaches for `stageId` unconditionally would look up nothing and render
+// it as a deleted goal.
 
 export type MissedKind = "unlogged" | "skipped";
 
-export interface MissedOccurrence {
-  key: string; // `${stageId}|${date}` — unique per (D54: one session per stage per date)
-  stageId: string;
+interface MissedBase {
+  key: string;
   date: IsoDate;
   daypartId: string;
   minutes: number;
   kind: MissedKind;
 }
+
+export interface MissedSession extends MissedBase {
+  source: "session";
+  stageId: string;
+}
+
+/**
+ * A one-off task whose daypart ended unanswered, or one that was skipped (D68). It
+ * carries its own title because it belongs to no goal — the `source` discriminant is
+ * what stops a caller reaching for a stage that does not exist.
+ */
+export interface MissedTask extends MissedBase {
+  source: "task";
+  taskId: string;
+  title: string;
+}
+
+export type MissedOccurrence = MissedSession | MissedTask;
 
 /**
  * Missed occurrences for one week, bounded to that week's plan slots and logs —
@@ -224,30 +247,33 @@ export async function missedForWeek(
   now: IsoDateTime,
 ): Promise<MissedOccurrence[]> {
   const weekEnd = addDays(weekStart, 6);
-  const [dayparts, slots, logs] = await Promise.all([
+  const [dayparts, slots, logs, tasks] = await Promise.all([
     getDayparts(),
     getPlanSlotsForWeek(weekStart),
     getSessionLogsBetween(weekStart, weekEnd),
+    getTasksBetween(weekStart, weekEnd),
   ]);
 
   const daypartsById = new Map(dayparts.map((dp) => [dp.id, dp]));
   const loggedDates = new Set(logs.map((log) => `${log.stageId}|${log.date}`));
 
+  // Reusing `daypartEndsAt` anchored at the occurrence's own start (rather than
+  // "now") gives the correct end instant for a *past* occurrence, including a
+  // wrapping night daypart whose end rolls onto the next calendar day.
+  const hasPassed = (date: IsoDate, daypartId: string): boolean => {
+    const daypart = daypartsById.get(daypartId);
+    if (!daypart) return false; // daypart since removed — can't say whether it passed
+    return daypartEndsAt(daypart, `${date}T${daypart.startTime}:00`) <= now;
+  };
+
   const unlogged: MissedOccurrence[] = [];
   for (const slot of slots) {
     const key = `${slot.stageId}|${slot.date}`;
     if (loggedDates.has(key)) continue; // already done, skipped, or voluntary-logged
-
-    const daypart = daypartsById.get(slot.daypartId);
-    if (!daypart) continue; // daypart since removed — can't say whether its window passed
-
-    // Reusing `daypartEndsAt` anchored at the occurrence's own start (rather than
-    // "now") gives the correct end instant for a *past* occurrence, including a
-    // wrapping night daypart whose end rolls onto the next calendar day.
-    const occurrenceEnd = daypartEndsAt(daypart, `${slot.date}T${daypart.startTime}:00`);
-    if (occurrenceEnd > now) continue; // still ahead — not missed yet, still pending
+    if (!hasPassed(slot.date, slot.daypartId)) continue; // still ahead, still pending
 
     unlogged.push({
+      source: "session",
       key,
       stageId: slot.stageId,
       date: slot.date,
@@ -260,6 +286,7 @@ export async function missedForWeek(
   const skipped: MissedOccurrence[] = logs
     .filter((log) => log.status === "skipped")
     .map((log) => ({
+      source: "session",
       key: `${log.stageId}|${log.date}`,
       stageId: log.stageId,
       date: log.date,
@@ -268,7 +295,28 @@ export async function missedForWeek(
       kind: "skipped",
     }));
 
-  return [...unlogged, ...skipped].sort((a, b) => diffDays(b.date, a.date));
+  // A one-off task is missed on exactly the same rule as a session (D68): skipped
+  // outright, or never answered before its daypart ended. A task still inside its
+  // occurrence is not missed — it is simply not done yet, and it is on Today.
+  const missedTasks: MissedOccurrence[] = tasks
+    .filter(
+      (task) =>
+        task.status === "skipped" ||
+        (task.status === "pending" && hasPassed(task.date, task.daypartId)),
+    )
+    .map((task) => ({
+      source: "task",
+      // Namespaced so a task id can never collide with a `${stageId}|${date}` key.
+      key: `task|${task.id}`,
+      taskId: task.id,
+      title: task.title,
+      date: task.date,
+      daypartId: task.daypartId,
+      minutes: task.minutes,
+      kind: task.status === "skipped" ? "skipped" : "unlogged",
+    }));
+
+  return [...unlogged, ...skipped, ...missedTasks].sort((a, b) => diffDays(b.date, a.date));
 }
 
 export function currentWeekStart(now: IsoDateTime): IsoDate {

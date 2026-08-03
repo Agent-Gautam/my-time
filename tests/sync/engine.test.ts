@@ -165,6 +165,7 @@ describe("re-planning after a pull (D62)", () => {
             status: "done",
             source: "planned",
             loggedAt: NOW,
+            taskId: null,
           },
         ],
       }),

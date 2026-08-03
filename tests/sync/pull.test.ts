@@ -162,6 +162,7 @@ describe("append-only rows are never overwritten by a pull", () => {
             status: "done",
             source: "voluntary",
             loggedAt: EARLY,
+            taskId: null,
           },
         ],
         checkIns: [
@@ -413,6 +414,7 @@ describe("a mixed pull", () => {
             status: "done",
             source: "planned",
             loggedAt: EARLY,
+            taskId: null,
           },
         ],
         planWeeks: [

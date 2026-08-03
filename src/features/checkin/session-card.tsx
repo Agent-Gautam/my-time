@@ -8,10 +8,20 @@
 // Skipped are the reason this card exists and are tapped far more often than the goal
 // is opened, and a card-wide link would sit under both of them waiting to swallow a
 // mis-aimed tap on a phone.
+//
+// **The inline task field (D70).** Typing a title and tapping Done attaches a task to
+// this goal alongside the session log — Skipped never does, regardless of what's
+// typed, and an empty field on Done is byte-identical to how this card behaved before
+// D70. This is not per-item content on the session itself (D12 stays exactly as
+// written): the text becomes its own `Task` row, and the log only ever gains a
+// reference to it.
+import { useState } from "react";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import type { ReconciledSlot } from "@/features/plan/planner";
 import { formatDuration } from "@/lib/duration";
 
@@ -22,8 +32,10 @@ export function SessionCard({
 }: {
   slot: ReconciledSlot;
   pending: boolean;
-  onLog: (status: "done" | "skipped") => void;
+  onLog: (status: "done" | "skipped", taskTitle?: string) => void;
 }) {
+  const [taskTitle, setTaskTitle] = useState("");
+
   return (
     <Card>
       <CardContent className="flex flex-col gap-3">
@@ -41,11 +53,25 @@ export function SessionCard({
             {formatDuration(slot.slot.minutes)}
           </span>
         </div>
+
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`task-${slot.slot.id}`} className="sr-only">
+            Attach a task (optional)
+          </Label>
+          <Input
+            id={`task-${slot.slot.id}`}
+            value={taskTitle}
+            placeholder="Attach a task (optional)"
+            disabled={pending}
+            onChange={(event) => setTaskTitle(event.target.value)}
+          />
+        </div>
+
         <div className="flex gap-2">
           <Button
             className="min-h-11 flex-1 transition-transform duration-150 ease-out active:scale-95"
             disabled={pending}
-            onClick={() => onLog("done")}
+            onClick={() => onLog("done", taskTitle)}
           >
             Done
           </Button>
