@@ -52,6 +52,20 @@ export function isoWeekStart(date: IsoDate): IsoDate {
   return addDays(date, -MONDAY_START_INDEX[weekdayOf(date)]);
 }
 
+/**
+ * Week-start from an arbitrary first-day-of-week. Used by device-aware callers
+ * (queries.ts `weekStartForDate`) that have access to the user's setting.
+ * Pure-core callers that cannot read device state use `isoWeekStart` (Monday-fixed).
+ */
+export function isoWeekStartFrom(date: IsoDate, firstDay: Weekday): IsoDate {
+  const ORDER: Weekday[] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+  const firstIdx = ORDER.indexOf(firstDay);
+  const dateIdx = ORDER.indexOf(weekdayOf(date));
+  // How many days back to go to reach the most recent `firstDay`.
+  const offset = (dateIdx - firstIdx + 7) % 7;
+  return addDays(date, -offset);
+}
+
 export function datesInRange(start: IsoDate, end: IsoDate): IsoDate[] {
   const days: IsoDate[] = [];
   for (let d = start; diffDays(d, end) <= 0; d = addDays(d, 1)) {

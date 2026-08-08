@@ -112,6 +112,16 @@ export interface OutboxRow {
   attempts: number;
 }
 
+/**
+ * Device-local preferences that are never synced. Only a handful of small values
+ * live here — everything user-facing that must round-trip to the server goes through
+ * the normal synced tables instead.
+ */
+export interface LocalSetting {
+  key: string;
+  value: unknown;
+}
+
 export class MyTimeDB extends Dexie {
   users!: Table<LocalUser, string>;
   dayparts!: Table<LocalDaypart, string>;
@@ -125,6 +135,7 @@ export class MyTimeDB extends Dexie {
   planWeeks!: Table<LocalPlanWeek, string>;
   planSlots!: Table<LocalPlanSlot, string>;
   outbox!: Table<OutboxRow, number>;
+  settings!: Table<LocalSetting, string>;
 
   constructor() {
     super("my-time");
@@ -179,6 +190,12 @@ export class MyTimeDB extends Dexie {
     // serves the "does this stage have any attached tasks at all" existence check.
     this.version(3).stores({
       tasks: "id, stageId, date, [stageId+date], [date+daypartId]",
+    });
+
+    // Device-local key-value settings (never synced). A plain `key` primary index
+    // is all that's needed — the table is tiny and only ever read by key.
+    this.version(4).stores({
+      settings: "key",
     });
   }
 }

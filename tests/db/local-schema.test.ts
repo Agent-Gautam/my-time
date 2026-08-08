@@ -11,9 +11,9 @@ const indexNames = (table: string) =>
   localDb.table(table).schema.indexes.map((index) => index.name);
 
 describe("Dexie local schema", () => {
-  it("declares every synced table plus the local-only outbox", () => {
+  it("declares every synced table plus the local-only outbox and settings", () => {
     const declared = localDb.tables.map((table) => table.name).sort();
-    expect(declared).toEqual([...SYNCED_TABLES, "outbox"].sort());
+    expect(declared).toEqual([...SYNCED_TABLES, "outbox", "settings"].sort());
   });
 
   it("indexes session_logs for date ranges and keyset pagination (D47)", () => {

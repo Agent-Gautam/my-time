@@ -2,6 +2,8 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { DaypartSettings } from "@/features/settings/daypart-settings";
 import { NotificationSettings } from "@/features/settings/notification-settings";
 import { StartToday } from "@/features/settings/start-today";
+import { WeekStartSettings } from "@/features/settings/week-start-settings";
+import { ResetEverything } from "@/features/settings/reset-everything";
 
 export default function SettingsPage() {
   return (
@@ -18,6 +20,17 @@ export default function SettingsPage() {
           </p>
         </div>
         <ThemeToggle />
+      </section>
+
+      <section className="flex flex-col gap-4">
+        <div>
+          <h2 className="text-section font-semibold text-text">Week</h2>
+          <p className="text-body text-text-muted">
+            The day your planning week starts on. Changes take effect
+            immediately and re-lay-out the current week.
+          </p>
+        </div>
+        <WeekStartSettings />
       </section>
 
       <section className="flex flex-col gap-4">
@@ -44,9 +57,16 @@ export default function SettingsPage() {
 
       <section className="flex flex-col gap-4 border-t border-border pt-8">
         <div>
-          <h2 className="text-section font-semibold text-text">Start Today</h2>
+          <h2 className="text-section font-semibold text-text">Start Fresh</h2>
         </div>
         <StartToday />
+      </section>
+
+      <section className="flex flex-col gap-4 border-t border-border pt-8">
+        <div>
+          <h2 className="text-section font-semibold text-text">Reset Everything</h2>
+        </div>
+        <ResetEverything />
       </section>
     </main>
   );

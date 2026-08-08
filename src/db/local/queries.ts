@@ -6,7 +6,7 @@
 // bounded by the active cap (D11) and a full read of those is fine.
 
 import type { GoalState, IsoDate, IsoDateTime } from "@/core/types";
-import { addDays, dateOnly, isoWeekStart } from "@/core/dateUtils";
+import { addDays, dateOnly, isoWeekStart, isoWeekStartFrom } from "@/core/dateUtils";
 
 import {
   localDb,
@@ -460,6 +460,35 @@ export async function getOutboxHighWaterMark(): Promise<number> {
 
 export async function ackOutbox(seqs: number[]): Promise<void> {
   await localDb.outbox.bulkDelete(seqs);
+}
+
+// ---------------------------------------------------------------------------
+// Device-local settings (never synced)
+// ---------------------------------------------------------------------------
+
+import type { Weekday } from "@/core/types";
+
+/** The day-of-week the rolling plan window starts on. Defaults to Monday. */
+export async function getWeekStartDay(): Promise<Weekday> {
+  const row = await localDb.settings.get("weekStartDay");
+  return (row?.value as Weekday | undefined) ?? "mon";
+}
+
+export async function setWeekStartDay(day: Weekday): Promise<void> {
+  await localDb.settings.put({ key: "weekStartDay", value: day });
+}
+
+/**
+ * Compute the start of the rolling week that contains `date`, using the
+ * user-configured first day of the week.
+ *
+ * `isoWeekStart` in `core/dateUtils.ts` is always Monday-anchored because the
+ * pure scheduler core has no access to device state. Callers that need the
+ * configurable version go through here.
+ */
+export async function weekStartForDate(date: IsoDate): Promise<IsoDate> {
+  const firstDay = await getWeekStartDay();
+  return isoWeekStartFrom(date, firstDay);
 }
 
 // ---------------------------------------------------------------------------

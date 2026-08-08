@@ -29,6 +29,8 @@ import type {
   TaskStatus,
 } from "@/core/types";
 
+import { dateOnly } from "@/core/dateUtils";
+
 import {
   localDb,
   type LocalCheckIn,
@@ -327,8 +329,71 @@ export async function putCheckIn(
   return row;
 }
 
+/**
+ * Wipe everything — all user data including goals, stages, dayparts, tracking, and
+ * push subscriptions. After this the device is back to a blank first-run state.
+ *
+ * Used by the "Reset Everything" action in Settings. Distinct from `resetTracking`
+ * which keeps goals and settings intact.
+ *
+ * Flow:
+ * 1. Clear every Dexie table (including settings) in one transaction.
+ * 2. Call POST /api/reset-everything to delete the server-side user row (cascades all).
+ * 3. Re-seed the device (dayparts + user row) so the app is immediately usable.
+ */
+export async function resetEverything(now: IsoDateTime): Promise<void> {
+  // Step 1: wipe all local tables atomically.
+  await localDb.transaction(
+    "rw",
+    [
+      localDb.users,
+      localDb.dayparts,
+      localDb.goals,
+      localDb.stages,
+      localDb.sessionLogs,
+      localDb.checkpoints,
+      localDb.checkIns,
+      localDb.tasks,
+      localDb.pushSubscriptions,
+      localDb.planWeeks,
+      localDb.planSlots,
+      localDb.outbox,
+      localDb.settings,
+    ],
+    async () => {
+      await localDb.users.clear();
+      await localDb.dayparts.clear();
+      await localDb.goals.clear();
+      await localDb.stages.clear();
+      await localDb.sessionLogs.clear();
+      await localDb.checkpoints.clear();
+      await localDb.checkIns.clear();
+      await localDb.tasks.clear();
+      await localDb.pushSubscriptions.clear();
+      await localDb.planWeeks.clear();
+      await localDb.planSlots.clear();
+      await localDb.outbox.clear();
+      await localDb.settings.clear();
+    },
+  );
+
+  // Step 2: purge server (user cascade deletes everything).
+  const syncKey = process.env.NEXT_PUBLIC_SYNC_KEY ?? "";
+  await fetch("/api/reset-everything", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(syncKey ? { "x-sync-key": syncKey } : {}),
+    },
+  });
+
+  // Step 3: re-seed so the app is usable immediately.
+  const { seedIfEmpty } = await import("@/db/local/seed");
+  await seedIfEmpty(now);
+}
+
 // ---------------------------------------------------------------------------
-// Start Today — explicit user-initiated purge
+// Start Fresh — tracking purge (goals survive)
 // ---------------------------------------------------------------------------
 
 /**
@@ -387,5 +452,9 @@ export async function resetTracking(now: IsoDateTime): Promise<void> {
   // Imported here (not at the top) to avoid a circular dependency:
   // mutations ← queries ← planner → mutations. The dynamic import breaks the cycle.
   const { relayoutWeek } = await import("@/features/plan/planner");
-  await relayoutWeek({ now });
+  // weekStart: today — the user explicitly asked to start fresh from today, so the
+  // new plan window opens on today rather than the previous Monday (or whatever the
+  // configured week-start day happens to be).
+  const today = dateOnly(now);
+  await relayoutWeek({ now, weekStart: today });
 }

@@ -25,6 +25,7 @@ import {
   getSessionLogsBetween,
   getSessionLogsForStage,
   replacePlanWeek,
+  weekStartForDate,
 } from "@/db/local/queries";
 import {
   localDb,
@@ -96,7 +97,9 @@ export async function relayoutWeek(input: {
 }): Promise<RelayoutResult> {
   const { now } = input;
   const today = dateOnly(now);
-  const weekStart = input.weekStart ?? isoWeekStart(today);
+  // Use the caller-supplied weekStart when given (e.g. Start Fresh passes today),
+  // otherwise derive it from the user's configured first-day-of-week setting.
+  const weekStart = input.weekStart ?? await weekStartForDate(today);
   const weekEnd = addDays(weekStart, 6);
 
   const [dayparts, goals, allActiveStages, existing] = await Promise.all([
