@@ -326,3 +326,66 @@ export async function putCheckIn(
   });
   return row;
 }
+
+// ---------------------------------------------------------------------------
+// Start Today — explicit user-initiated purge
+// ---------------------------------------------------------------------------
+
+/**
+ * Wipe all tracking data and re-lay-out a fresh week from `now`.
+ *
+ * This is a documented exception to the append-only rule (D48). A bulk delete
+ * cannot be expressed as record-level LWW tombstones without generating thousands
+ * of rows that would then have to be processed on every device. Instead:
+ *
+ * 1. All six tracking tables are cleared locally in one `rw` transaction.
+ * 2. The outbox is also cleared — any pending ops are now stale.
+ * 3. The server is purged immediately via `POST /api/reset-tracking` (not through
+ *    the outbox, for the same reason — D45/LWW was designed for record edits, not
+ *    bulk purges).
+ * 4. `relayoutWeek` produces a fresh plan from today.
+ *
+ * Goals, stages, dayparts, users, and push subscriptions survive untouched.
+ */
+export async function resetTracking(now: IsoDateTime): Promise<void> {
+  // Step 1 + 2: clear local tracking tables and the outbox atomically.
+  // Pass tables as an array — Dexie's positional overload only accepts up to 7
+  // table args and we have 8, so the array form is required here.
+  await localDb.transaction(
+    "rw",
+    [
+      localDb.sessionLogs,
+      localDb.checkpoints,
+      localDb.checkIns,
+      localDb.tasks,
+      localDb.planSlots,
+      localDb.planWeeks,
+      localDb.outbox,
+    ],
+    async () => {
+      await localDb.sessionLogs.clear();
+      await localDb.checkpoints.clear();
+      await localDb.checkIns.clear();
+      await localDb.tasks.clear();
+      await localDb.planSlots.clear();
+      await localDb.planWeeks.clear();
+      await localDb.outbox.clear();
+    },
+  );
+
+  // Step 3: purge the server. Not through the outbox — see the doc comment above.
+  const syncKey = process.env.NEXT_PUBLIC_SYNC_KEY ?? "";
+  await fetch("/api/reset-tracking", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(syncKey ? { "x-sync-key": syncKey } : {}),
+    },
+  });
+
+  // Step 4: lay out a fresh week from today.
+  // Imported here (not at the top) to avoid a circular dependency:
+  // mutations ← queries ← planner → mutations. The dynamic import breaks the cycle.
+  const { relayoutWeek } = await import("@/features/plan/planner");
+  await relayoutWeek({ now });
+}
