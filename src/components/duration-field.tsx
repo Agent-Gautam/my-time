@@ -48,30 +48,28 @@ export function DurationField({ idPrefix, value, onChange, min = 1 }: DurationFi
 
   return (
     <div className="flex items-end gap-2">
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor={`${idPrefix}-hours`}>Hours</Label>
+      <div className="flex gap-1.5">
         <Input
           id={`${idPrefix}-hours`}
           type="number"
           min={0}
-          className="w-16"
+          className="w-16 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
           value={hoursText}
           onChange={(e) => setHoursText(e.target.value)}
           onBlur={(e) => commit(e.target.value, minutesText)}
         />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor={`${idPrefix}-minutes`}>Minutes</Label>
+        <Label htmlFor={`${idPrefix}-hours`}>H</Label>
         <Input
           id={`${idPrefix}-minutes`}
           type="number"
           min={0}
           max={59}
-          className="w-16"
+          className="w-16 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
           value={minutesText}
           onChange={(e) => setMinutesText(e.target.value)}
           onBlur={(e) => commit(hoursText, e.target.value)}
         />
+        <Label htmlFor={`${idPrefix}-minutes`}>M</Label>
       </div>
     </div>
   );
