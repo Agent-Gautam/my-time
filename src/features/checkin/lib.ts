@@ -9,7 +9,6 @@ import {
   getActiveStages,
   getCheckpointsForStage,
   getDayparts,
-  getGoalsWithStage,
   getPlanSlotsForDaypart,
   getPlanSlotsForWeek,
   getSessionLogsBetween,
@@ -17,7 +16,6 @@ import {
   getTasksBetween,
   LOCAL_HISTORY_WINDOW_DAYS,
 } from "@/db/local/queries";
-import type { LocalGoal, LocalStage } from "@/db/local/schema";
 import { daypartEndsAt } from "@/lib/daypart";
 
 /**
@@ -63,64 +61,6 @@ export async function goalPaceStatus(stage: Stage, now: IsoDateTime): Promise<Go
     cadence: cadenceStatus(stage, history, now),
     scope: scopeStatus(stage, checkpoints, history, now),
   };
-}
-
-export interface VoluntaryCandidate {
-  goal: LocalGoal;
-  stage: LocalStage;
-}
-
-// Wide enough to see any realistic `minRestDays` gap without an unbounded scan
-// (D47) — recovery constraints are set in days, not weeks.
-const RECOVERY_LOOKBACK_DAYS = 30;
-
-/**
- * Active stages open for voluntary catch-up right now (Architecture.md §9.3, D20):
- * not already logged today — one session per stage per date (D54) applies to a
- * voluntary log exactly as it does to a planned one — and not blocked by
- * `maxPerWeek`/`minRestDays` where the stage sets them.
- *
- * `excludeStageIds` is the caller's own "already offered above" set — stages with
- * a plan slot already rendered in `keep`/`dropped` for this daypart shouldn't get
- * a second, redundant logging affordance.
- */
-export async function voluntaryCandidates(
-  excludeStageIds: ReadonlySet<string>,
-  today: IsoDate,
-): Promise<VoluntaryCandidate[]> {
-  const weekStart = isoWeekStart(today);
-  const from = addDays(today, -RECOVERY_LOOKBACK_DAYS);
-
-  const goalsWithStage = await getGoalsWithStage({ states: ["active"] });
-  const eligible = goalsWithStage.filter(
-    (g): g is { goal: LocalGoal; stage: LocalStage } =>
-      g.stage != null && !excludeStageIds.has(g.stage.id),
-  );
-
-  const results = await Promise.all(
-    eligible.map(async ({ goal, stage }) => {
-      const history = await getSessionLogsForStage(stage.id, from, today);
-      if (history.some((h) => h.date === today)) return null;
-
-      if (stage.maxPerWeek != null) {
-        const doneThisWeek = history.filter(
-          (h) => h.status === "done" && diffDays(h.date, weekStart) >= 0,
-        ).length;
-        if (doneThisWeek >= stage.maxPerWeek) return null;
-      }
-
-      if (stage.minRestDays != null) {
-        const doneDates = history.filter((h) => h.status === "done").map((h) => h.date);
-        const lastDone =
-          doneDates.length > 0 ? doneDates.reduce((l, d) => (diffDays(d, l) > 0 ? d : l)) : null;
-        if (lastDone != null && diffDays(today, lastDone) <= stage.minRestDays) return null;
-      }
-
-      return { goal, stage };
-    }),
-  );
-
-  return results.filter((r): r is VoluntaryCandidate => r != null);
 }
 
 export type PaceLevel = "on-track" | "attention" | "blocked";
