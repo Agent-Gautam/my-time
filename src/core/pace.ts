@@ -17,10 +17,16 @@ export interface CadenceStatus {
 /**
  * `history` must be this stage's SessionLog rows only (any status/source — done
  * sessions count, planned vs voluntary both credit per D20).
+ *
+ * `weekStart` is optional — defaults to Monday-anchored `isoWeekStart(today)` for
+ * callers that don't have the plan's actual window (e.g. pure-core tests). Callers
+ * that do know the window (e.g. `goalPaceStatus`) should pass it so the cadence
+ * status matches the plan's own window, especially when Start Fresh has set
+ * weekStart to today rather than the previous Monday.
  */
-export function cadenceStatus(stage: Stage, history: readonly SessionLog[], now: IsoDateTime): CadenceStatus {
+export function cadenceStatus(stage: Stage, history: readonly SessionLog[], now: IsoDateTime, weekStart?: IsoDate): CadenceStatus {
   const today = dateOnly(now);
-  const windowStart = isoWeekStart(today);
+  const windowStart = weekStart ?? isoWeekStart(today);
   const windowEnd = addDays(windowStart, 6);
 
   const required = requiredSessionsInWindow(stage, windowStart, windowEnd);

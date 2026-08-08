@@ -15,6 +15,7 @@ import {
   getSessionLogsForStage,
   getTasksBetween,
   LOCAL_HISTORY_WINDOW_DAYS,
+  weekStartForDate,
 } from "@/db/local/queries";
 import { daypartEndsAt } from "@/lib/daypart";
 
@@ -47,10 +48,13 @@ export interface GoalPaceStatus {
 }
 
 /** Bounded read of one stage's history/checkpoints (D47), then the two pure
- *  pace.ts questions (PRD §6.7). */
+ *  pace.ts questions (PRD §6.7). Uses the active plan's week window so cadence
+ *  status matches the window the scheduler actually used (e.g. after Start Fresh). */
 export async function goalPaceStatus(stage: Stage, now: IsoDateTime): Promise<GoalPaceStatus> {
   const today = dateOnly(now);
   const from = addDays(today, -LOCAL_HISTORY_WINDOW_DAYS);
+  // Use the same week window the plan was laid out with, not the Monday-anchored default.
+  const weekStart = await weekStartForDate(today);
   const [history, checkpoints] = await Promise.all([
     getSessionLogsForStage(stage.id, from, today),
     stage.scopeUnitTotal != null && stage.targetDate != null
@@ -58,7 +62,7 @@ export async function goalPaceStatus(stage: Stage, now: IsoDateTime): Promise<Go
       : Promise.resolve([]),
   ]);
   return {
-    cadence: cadenceStatus(stage, history, now),
+    cadence: cadenceStatus(stage, history, now, weekStart),
     scope: scopeStatus(stage, checkpoints, history, now),
   };
 }

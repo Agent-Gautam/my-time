@@ -1,4 +1,5 @@
 import { ThemeToggle } from "@/components/theme-toggle";
+import { AutoDarkSettings } from "@/features/settings/auto-dark-settings";
 import { DaypartSettings } from "@/features/settings/daypart-settings";
 import { NotificationSettings } from "@/features/settings/notification-settings";
 import { StartToday } from "@/features/settings/start-today";
@@ -16,10 +17,12 @@ export default function SettingsPage() {
         <div>
           <h2 className="text-section font-semibold text-text">Theme</h2>
           <p className="text-body text-text-muted">
-            Auto follows your own night daypart, not the OS clock.
+            Auto switches to dark at a time you choose, or follows your night
+            daypart if no time is set.
           </p>
         </div>
         <ThemeToggle />
+        <AutoDarkSettings />
       </section>
 
       <section className="flex flex-col gap-4">

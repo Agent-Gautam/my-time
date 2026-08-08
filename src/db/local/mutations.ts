@@ -416,6 +416,11 @@ export async function resetTracking(now: IsoDateTime): Promise<void> {
   // Step 1 + 2: clear local tracking tables and the outbox atomically.
   // Pass tables as an array — Dexie's positional overload only accepts up to 7
   // table args and we have 8, so the array form is required here.
+  // tasks: only delete pending (unanswered) tasks — done/skipped tasks are historical
+  // records and should survive a Start Fresh the same way session logs from before
+  // the fresh start are conceptually past data. The user asked to start fresh, not
+  // to erase their history.
+  // We also include localDb.settings to set the weekStartDay preference to today's weekday.
   await localDb.transaction(
     "rw",
     [
@@ -426,15 +431,22 @@ export async function resetTracking(now: IsoDateTime): Promise<void> {
       localDb.planSlots,
       localDb.planWeeks,
       localDb.outbox,
+      localDb.settings,
     ],
     async () => {
       await localDb.sessionLogs.clear();
       await localDb.checkpoints.clear();
       await localDb.checkIns.clear();
-      await localDb.tasks.clear();
+      // Keep tasks that have already been answered — they are historical facts.
+      await localDb.tasks.where("status").equals("pending").delete();
       await localDb.planSlots.clear();
       await localDb.planWeeks.clear();
       await localDb.outbox.clear();
+
+      const today = dateOnly(now);
+      const { weekdayOf } = await import("@/core/dateUtils");
+      const todayWeekday = weekdayOf(today);
+      await localDb.settings.put({ key: "weekStartDay", value: todayWeekday });
     },
   );
 

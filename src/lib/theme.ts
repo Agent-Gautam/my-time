@@ -28,15 +28,37 @@ function getSystemTheme(): ResolvedTheme {
 // Wired to the user's own dayparts (D7) by hooks/use-theme.ts, which reads them
 // live from Dexie. Falls back to the OS preference until dayparts are loaded, or
 // on a fresh device with no "night" daypart yet.
-function resolveAutoTheme(now: Date, dayparts?: DaypartBoundary[]): ResolvedTheme {
+//
+// If `autoDarkStart` is set by the user (Settings → Theme), it overrides the
+// "night daypart" heuristic: dark from autoDarkStart until 06:00 the next morning.
+function resolveAutoTheme(
+  now: Date,
+  autoDarkStart: string | null,
+  dayparts?: DaypartBoundary[],
+): ResolvedTheme {
+  // 1. Explicit user-configured dark-start time takes priority.
+  if (autoDarkStart) {
+    const minutes = now.getHours() * 60 + now.getMinutes();
+    const start = minutesOf(autoDarkStart);
+    const end = 6 * 60; // fixed dawn at 06:00
+    // Dark window wraps midnight (e.g. 21:00 → 06:00 next day).
+    const inDark =
+      start >= end
+        ? minutes >= start || minutes < end
+        : minutes >= start && minutes < end;
+    return inDark ? "dark" : "light";
+  }
+
+  // 2. Legacy: look for a daypart named "night" and use its boundaries.
   const night = dayparts?.find((d) => d.name.toLowerCase() === "night");
   if (night) {
     const minutes = now.getHours() * 60 + now.getMinutes();
     const start = minutesOf(night.startTime);
     const end = minutesOf(night.endTime);
-    const inNight = start < end
-      ? minutes >= start && minutes < end
-      : minutes >= start || minutes < end; // wraps past midnight
+    const inNight =
+      start < end
+        ? minutes >= start && minutes < end
+        : minutes >= start || minutes < end; // wraps past midnight
     return inNight ? "dark" : "light";
   }
   return getSystemTheme();
@@ -44,10 +66,11 @@ function resolveAutoTheme(now: Date, dayparts?: DaypartBoundary[]): ResolvedThem
 
 export function resolveTheme(
   mode: ThemeMode,
+  autoDarkStart: string | null,
   dayparts?: DaypartBoundary[],
   now: Date = new Date(),
 ): ResolvedTheme {
-  return mode === "auto" ? resolveAutoTheme(now, dayparts) : mode;
+  return mode === "auto" ? resolveAutoTheme(now, autoDarkStart, dayparts) : mode;
 }
 
 export function getStoredMode(): ThemeMode {

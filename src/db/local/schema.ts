@@ -197,6 +197,14 @@ export class MyTimeDB extends Dexie {
     this.version(4).stores({
       settings: "key",
     });
+
+    // `status` index — required by `resetTracking` which queries pending tasks via
+    // `.where("status").equals("pending")`. Missing from v1–v3; added here as v5
+    // so existing devices get an upgrade path without losing their task history.
+    // Only the changed store is listed; all other stores carry forward from v4.
+    this.version(5).stores({
+      tasks: "id, stageId, status, date, [stageId+date], [date+daypartId]",
+    });
   }
 }
 

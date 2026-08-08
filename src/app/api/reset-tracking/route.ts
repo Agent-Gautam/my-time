@@ -9,7 +9,7 @@
 // Auth is the same shared-key check as /api/sync (D59).
 
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import { db } from "@/db/server/client";
 import {
@@ -41,7 +41,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     await tx.delete(sessionLogs);
     await tx.delete(checkpoints);
     await tx.delete(checkIns).where(eq(checkIns.userId, LOCAL_USER_ID));
-    await tx.delete(tasks).where(eq(tasks.userId, LOCAL_USER_ID));
+    // Keep answered tasks (done/skipped) — they are historical records.
+    // Only pending tasks (not yet resolved) belong to the old plan and should be cleared.
+    await tx.delete(tasks).where(and(eq(tasks.userId, LOCAL_USER_ID), eq(tasks.status, "pending")));
     await tx.delete(planWeeks).where(eq(planWeeks.userId, LOCAL_USER_ID));
     // plan_slots are removed by the FK cascade on planWeeks.onDelete("cascade").
   });

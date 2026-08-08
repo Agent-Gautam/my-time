@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 
-import { getDayparts } from "@/db/local/queries";
+import { getDayparts, getAutoDarkStart } from "@/db/local/queries";
 import {
   applyResolvedTheme,
   getStoredMode,
@@ -38,9 +38,15 @@ export function useThemeMode() {
     [],
   );
 
+  // User-configured auto dark start time ("HH:mm") or null (use night daypart fallback).
+  const autoDarkStart: string | null | undefined = useLiveQuery(
+    () => getAutoDarkStart(),
+    [],
+  );
+
   const resolved = useSyncExternalStore(
     subscribeThemeMode,
-    () => resolveTheme(mode, dayparts),
+    () => resolveTheme(mode, autoDarkStart ?? null, dayparts),
     getServerResolved,
   );
 
@@ -49,15 +55,15 @@ export function useThemeMode() {
   // mounts. Re-apply once the live dayparts are known — a no-op cross-fade if they
   // agree (design.md §6.3).
   useEffect(() => {
-    applyResolvedTheme(resolveTheme(mode, dayparts));
-  }, [mode, dayparts]);
+    applyResolvedTheme(resolveTheme(mode, autoDarkStart ?? null, dayparts));
+  }, [mode, dayparts, autoDarkStart]);
 
   const setMode = useCallback(
     (next: ThemeMode) => {
       setStoredMode(next);
-      applyResolvedTheme(resolveTheme(next, dayparts));
+      applyResolvedTheme(resolveTheme(next, autoDarkStart ?? null, dayparts));
     },
-    [dayparts],
+    [dayparts, autoDarkStart],
   );
 
   return { mode, resolved, setMode };

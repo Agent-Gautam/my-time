@@ -479,6 +479,25 @@ export async function setWeekStartDay(day: Weekday): Promise<void> {
 }
 
 /**
+ * The user-configured time at which auto dark mode begins, as "HH:mm".
+ * Returns `null` when unset — the hook falls back to detecting the "night"
+ * daypart boundary, which was the original behaviour.
+ */
+export async function getAutoDarkStart(): Promise<string | null> {
+  const row = await localDb.settings.get("autoDarkStart");
+  const v = row?.value;
+  return typeof v === "string" && /^\d{2}:\d{2}$/.test(v) ? v : null;
+}
+
+export async function setAutoDarkStart(time: string | null): Promise<void> {
+  if (time === null) {
+    await localDb.settings.delete("autoDarkStart");
+  } else {
+    await localDb.settings.put({ key: "autoDarkStart", value: time });
+  }
+}
+
+/**
  * Compute the start of the rolling week that contains `date`, using the
  * user-configured first day of the week.
  *

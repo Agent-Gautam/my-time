@@ -20,13 +20,36 @@ import { useLiveQuery } from "dexie-react-hooks";
 
 import { DartLoader } from "@/components/dart-mark";
 
-import { currentDaypart, localNow } from "@/lib/daypart";
+import {
+  currentDaypart,
+  localNow,
+  minutesSinceMidnight,
+  minutesOfDay,
+} from "@/lib/daypart";
 import { getDayparts, getGoalsWithStage } from "@/db/local/queries";
+import type { LocalDaypart } from "@/db/local/schema";
 
 import { CheckpointPrompt, type CheckpointTarget } from "./checkpoint-prompt";
 import { DaypartPanel } from "./daypart-panel";
+import { FreeTimeCard } from "./free-time-card";
 import { GoalStatusRow } from "./goal-status-row";
 import { TasksSection } from "./tasks-section";
+
+/** Returns the next daypart whose start time is strictly after `nowMinute`, wrapping. */
+function nextDaypartAfter(
+  dayparts: readonly LocalDaypart[],
+  nowMinute: number,
+): LocalDaypart | null {
+  if (dayparts.length === 0) return null;
+  // Find the first daypart that starts after now (today or wrapping to tomorrow).
+  const sorted = [...dayparts].sort(
+    (a, b) => minutesOfDay(a.startTime) - minutesOfDay(b.startTime),
+  );
+  // Prefer one that starts later today.
+  const later = sorted.find((dp) => minutesOfDay(dp.startTime) > nowMinute);
+  // Otherwise the next one wraps to tomorrow — pick the earliest-starting.
+  return later ?? sorted[0] ?? null;
+}
 
 export function CheckinView() {
   const [initialNow] = useState(() => localNow());
@@ -35,8 +58,16 @@ export function CheckinView() {
 
   const dataReady = useLiveQuery(() => getDayparts().then(() => true), [], false);
 
-  const detectedDaypartId = currentDaypart(dayparts, initialNow)?.id ?? dayparts[0]?.id ?? null;
+  // Whether the wall clock is currently between dayparts (a gap the user configured).
+  const activeDaypart = dataReady ? currentDaypart(dayparts, initialNow) : undefined;
+  const isFreeTime = dataReady && dayparts.length > 0 && activeDaypart === null;
+
+  const detectedDaypartId = activeDaypart?.id ?? dayparts[0]?.id ?? null;
   const [daypartOverride, setDaypartOverride] = useState<string | null>(null);
+  // Recompute from live dayparts on every render — dayparts may not be loaded on
+  // the first render, so we cannot freeze this into state. `detectedDaypartId` is
+  // derived from `dayparts` (a live query result) and `initialNow` (stable), so it
+  // re-resolves to the correct daypart once the live query populates.
   const currentDaypartId = daypartOverride ?? detectedDaypartId;
 
   // `null` means "follow the current daypart" — the resting state. Arrows set this
@@ -65,6 +96,12 @@ export function CheckinView() {
     setViewedId(next.id);
   };
 
+  // When free-time and the user hasn't manually navigated to a daypart,
+  // show the free-time card. If they arrow to browse, show that panel.
+  const showFreeTime = isFreeTime && viewedId === null && daypartOverride === null;
+  const nowMinute = minutesSinceMidnight(initialNow);
+  const nextDaypart = showFreeTime ? nextDaypartAfter(dayparts, nowMinute) : null;
+
   return (
     <div className="flex flex-col gap-6 py-6">
       <header>
@@ -73,6 +110,11 @@ export function CheckinView() {
 
       {dayparts.length === 0 ? (
         <p className="text-label text-text-muted">No dayparts set up yet.</p>
+      ) : showFreeTime ? (
+        <FreeTimeCard
+          nextDaypart={nextDaypart}
+          onBrowse={() => setViewedId(dayparts[0]?.id ?? null)}
+        />
       ) : (
         viewedDaypart && (
           <DaypartPanel
