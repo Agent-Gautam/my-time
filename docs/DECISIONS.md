@@ -1587,6 +1587,174 @@ Supabase** — left for the user, same as `0003` was.
 
 ---
 
+### D71 — Today becomes a daypart carousel; the standalone "Log a session" list is retired
+
+**Built.** Two changes, landing together because the second retires the first.
+
+**"Log a session" — the standalone voluntary catch-up list — is gone.** It let the
+user tap Done on any active goal not already offered above, writing a
+`source: "voluntary"` log directly, gated on `maxPerWeek`/`minRestDays` before the
+candidate ever rendered. D70 (same session, earlier) built a second, newer path to
+the identical outcome: attach a task to a goal and mark it Done, which pairs a
+voluntary log behind the scenes. Two mechanisms doing the same job is the actual
+problem — not which one to keep. The newer path is more capable (it names *what* the
+catch-up was, which the blanket list never did) and is what stays.
+`voluntaryCandidates` (`checkin/lib.ts`) and `logVoluntary` (`checkin-view.tsx`) are
+deleted outright, not deprecated. **The `maxPerWeek`/`minRestDays` gate this list
+enforced at render time has no equivalent on the task-attachment path** — flagged
+already in `setTaskStatus`'s docblock (`db/local/mutations.ts`) as a known,
+unfixed gap rather than silently dropped.
+
+**Today's page shows exactly one daypart's card at a time, as a carousel — not a
+view of one fixed daypart and not a stacked accordion of all of them.** (This
+supersedes an accordion-of-all-four first pass built earlier in the same
+unshipped session — replaced directly on request before it was ever committed,
+so D71 as recorded here describes what actually shipped.) The card's header
+carries the daypart name and time range, flanked by two round prev/next arrow
+buttons; tapping either steps the *viewed* daypart without changing what's
+actually current. The resting view — on load, and whenever the user hasn't
+browsed away — is always the current daypart. Everything else on the card (stat
+grid, duration field, "Reschedule," sessions, "won't fit" list, tasks) is
+unconditional: whichever daypart is being viewed shows its full body, always.
+Requested directly, replacing both the single-daypart check-in flow and the
+separate `AdjustToday` sheet.
+
+**Nothing in `core/`, `db/local/queries.ts`, or `sync/` changed for this.** Every
+per-daypart read already took an explicit `daypartId` parameter, not an implicit
+"the selected one" — `reconcileNow`, `requiredMinutesForDaypart`,
+`getSessionLogsForDaypart`, `getTasksForDaypart`, `getLatestCheckIn`, and every
+`lib/daypart.ts` helper. `TaskList` already took a `daypart` prop, not a hardcoded
+reference. This was a UI restructuring end to end.
+
+**Only the viewed daypart mounts and queries at all — there's no "every panel
+queries unconditionally" concern to design around**, unlike the accordion pass
+this replaced. A carousel by construction renders one `<DaypartPanel>`; the other
+three dayparts' `reconcileNow`/session/task queries simply don't run until the
+user arrows to them. This is a smaller footprint than the accordion, not a
+regression from it — D47 was never at stake either way, since four dayparts is a
+small, fixed set regardless of how many render at once.
+
+**There is no accordion body to open or close, so no snap-vs-animate call was
+needed for it.** The card's body is always fully rendered for whichever daypart is
+viewed. The one animated surface is the position treatment below
+(`transform`/`opacity` only, legal under design.md §6.1).
+
+**Current/past/future is tint alone, never text**, composed from existing semantic
+tokens (D52) — no new colours added, and unchanged in meaning from the accordion
+pass, just now applied to a single card instead of a stack:
+- Current: full size, `shadow-md ring-1 ring-accent-fill/30`, full opacity.
+- Past: `scale-95 opacity-70`, a faint `neutral`-tinted wash + ring (cool,
+  receding).
+- Future: the same shrink, but `accent-fill`-tinted instead (warm, ahead) — tint
+  is the *only* difference between past and future.
+- This is a translucent fill, not a blur or `backdrop-filter` — §6.1 bans those
+  specifically for their Android GPU cost, which a plain tinted background doesn't
+  carry.
+- Position is computed by comparing the *viewed* daypart's index to the *current*
+  daypart's index — browsing with the arrows never changes what's current, so a
+  dimmed card reads as "not the one you're acting on," exactly as it did when the
+  same tint marked a shrunk card in the old stack.
+
+**"Set current" writes to the same `daypartOverride` state the old "Change"
+picker in `AdjustToday` already used, and also clears the carousel's viewed-index
+override** so the view snaps back to following the (now-updated) current daypart —
+no new mutation, no new state shape beyond that one extra reset (PRD §6.5's
+"confirms or corrects" still holds: detection still runs first, this is still a
+correction, not a requirement).
+
+**Viewed-daypart state is a single nullable id, not the accordion's
+hover-then-tap stack.** `viewedId` is `null` at rest (meaning "follow whatever is
+current") and is set explicitly by the prev/next arrows to a neighboring daypart's
+id, wrapping around at either end of the list. There is no hover state and no
+click-outside-to-close listener — a carousel has nothing to close, only something
+to step through. This is a simpler mechanism than the accordion's
+`hoveredId ?? openId ?? currentDaypartId` chain, and drops the container ref +
+document click-listener that chain needed entirely.
+
+**`AdjustToday` (`features/checkin/adjust-today.tsx`) is deleted outright.** Its
+stat grid, duration field and submit button live inline in
+`features/checkin/daypart-panel.tsx` now, per daypart, renamed "Reschedule."
+**Not yet browser-verified** — the arrow-step feel, whether the tint treatment
+reads as intended on a single dimmed card, and mobile layout of the header's three
+elements (arrow / name+time / arrow) all need a real browser pass, which this
+session did not run.
+
+---
+
+### D72 — First-run seed rows are stamped at the epoch, so a reseed can never overwrite real data
+
+**Built. This is a data-loss bug fix, not a refinement.** Symptom: daypart boundaries
+set in settings revert to the seeded defaults, on every device, with no error.
+
+Three existing choices combine into it, and each is correct alone:
+
+1. `seedIfEmpty` (`db/local/seed.ts`) writes `DEFAULT_DAYPARTS` through
+   `putDaypart`, which **enqueues an outbox row**. Deliberate, and stated in that
+   file's header: a device that seeds and then goes online must not look empty to
+   the server.
+2. Seed ids are deterministic — `daypart-morning`, not a UUID (D58). So a seed row
+   is an **`UPDATE` of the server's existing row**, never an insert.
+3. The server's LWW guard is `stored.updated_at < incoming.updated_at`
+   (`app/api/sync/route.ts`, `newerThanStored`). Stamped with `now`, a seed written
+   today beats an edit made last week.
+
+`seedIfEmpty` runs on first paint, from `Nav`'s mount effect — **before any pull can
+arrive.** So on any device whose mirror is empty for any reason at all (fresh
+install, reinstalled PWA, cleared or evicted IndexedDB — the last of which is
+routine here, since clearing local data is how test data gets removed), the app
+seeds defaults and pushes them over the user's real settings. `runSync` pushes
+*before* it pulls within the same request, so the pull that follows brings back the
+defaults it just uploaded; there is no cursor state that could rescue it, and every
+other device then pulls them too. Silent, and permanent until the user notices and
+re-enters the values — which reseeds again on the next clear.
+
+**D67 already reasoned through this exact race**, for `users.week_starts_on`:
+*"`seedIfEmpty` runs on first paint, before any pull can arrive, and writes
+`local-user` through `putUser`, which enqueues."* That reasoning was used to reject a
+guessed default for one column. It was never carried across to the four dayparts the
+same function seeds — so the conclusion was right and its scope was too narrow.
+
+**The fix: seed rows carry `updatedAt: "1970-01-01T00:00:00"`, not the clock.**
+`SEED_STAMP` in `seed.ts`, passed to both `putUser` and every `putDaypart`. The
+server's guard then reads `stored < '1970-01-01'`, which is false for every real
+row, on both halves of the wire. This works *because* of D53: naive local wall-clock
+strings compare lexicographically, and client and server compare them identically.
+
+**They still enqueue.** The header's promise is kept — a genuinely first device with
+an empty server still inserts its four dayparts, because an insert has no stored row
+to lose to. Only the overwrite is prevented.
+
+`putUser` and `putDaypart` take an optional third argument, `stampedAt`, defaulting
+to `now`. Every other caller is untouched and gets `now` for both. The two stamps are
+genuinely different things: `updatedAt` is the row's place in the LWW order, `now` is
+when this device asked for it to be sent. A seed row is legitimately ancient and
+legitimately queued right now.
+
+**The cost, accepted:** a seed can never overwrite a server row even where that would
+be correct. There is no such case — a server row that exists is by definition not
+something a device with an empty mirror knows better than.
+
+**What this does and does not reach.** It protects the server, and therefore every
+other device. It does **not** make a wiped mirror self-heal on its own: the pull
+cursors live in `localStorage` (`sync/memo.ts`), not in Dexie, so a device whose
+IndexedDB was cleared while its cursors survived asks for rows newer than a mark it
+has already passed, receives nothing, and shows the epoch defaults until something
+bumps those rows' `server_updated_at`. Clearing site data — both stores — recovers
+it. That asymmetry is `memo.ts`'s documented compromise and is unchanged here; D72's
+claim is only that a reseed can no longer *destroy* anything.
+
+**Rejected alternative: seed locally without enqueueing, then enqueue after the first
+successful pull if the table is still empty.** Strictly more precise, and it is what
+a multi-user version would need. It also adds a boot state machine and couples
+`seed.ts` to the sync engine, for a case the epoch stamp closes with one constant.
+
+**Related, not fixed here:** nothing calls `navigator.storage.persist()`, so Chrome is
+free to evict the IndexedDB that triggers all of this in the first place. That is
+prevention rather than correctness — with D72 in place an eviction costs a re-pull,
+not the user's settings — but it should land.
+
+---
+
 ## Open questions
 
 - ~~O1 — Planning horizon~~ → resolved by **D16**.

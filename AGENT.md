@@ -141,3 +141,6 @@ npm run db:migrate     # drizzle: apply migrations
 
 Update `docs/memory.md`: what got done, what's in progress, what's next. It's the handoff
 to the next session — treat it as required, not optional.
+
+## Token usage
+No need to generate extra docs to explain what you have done, you can tell that in simple bullets.

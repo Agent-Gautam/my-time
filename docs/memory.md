@@ -2378,3 +2378,138 @@ sticky at the top on every breakpoint alongside the app mark and wordmark.
 lint/typecheck/test/build were not run before that commit. Ran clean on the branch
 immediately before merging to `main` (see below), so the gate did happen, just after
 the commit rather than before it.
+
+---
+
+## Session — Today becomes a daypart accordion; "Log a session" retired (D71)
+
+On `main`, working tree — **not committed, not pushed.**
+
+Two changes, landing together because the second retires the first.
+
+### 1. "Log a session" removed
+
+The standalone voluntary catch-up list (any active goal not already offered, tap
+Done, gated on `maxPerWeek`/`minRestDays`) is deleted — `voluntaryCandidates`
+(`checkin/lib.ts`), `logVoluntary` and its JSX section (`checkin-view.tsx`), gone
+outright. Superseded by D70's attach-a-task-to-a-goal path, built earlier this same
+session: two mechanisms doing the same job was the actual problem. The
+`maxPerWeek`/`minRestDays` gate the old list enforced has no equivalent on the
+task-attachment path — already flagged as a known gap in `setTaskStatus`'s
+docblock, reworded here to stop naming the now-deleted function.
+
+### 2. Today is now a vertical accordion of every daypart — **D71**
+
+Requested directly, mid-session, interrupting an earlier task (the "Log a session"
+removal above, which was half-done in the working tree at the time — finished as
+part of this same change rather than as a separate pass). Went through
+`EnterPlanMode` given the size: a rewrite of the app's most important screen, with
+real interaction-design forks. Two were asked and confirmed before writing code:
+**vertical stack** (not a horizontal filmstrip), and **replace the separate
+Adjust-today sheet entirely** rather than keep both.
+
+**Nothing in `core/`, `db/local/queries.ts`, or `sync/` changed.** Checked
+deliberately during planning: every per-daypart read already took an explicit
+`daypartId`, never an implicit "the selected one" — `reconcileNow`,
+`requiredMinutesForDaypart`, `getSessionLogsForDaypart`, `getTasksForDaypart`,
+`getLatestCheckIn`, every `lib/daypart.ts` helper, and `TaskList` already took a
+`daypart` prop. This was a UI restructuring end to end.
+
+**New file:** `features/checkin/daypart-panel.tsx` — one daypart's whole card:
+header (name, time range, "Set current" button) + a body (stat grid, duration
+field, "Reschedule" button, session cards, "won't fit" list, `<TaskList/>`) that's
+always queried but only rendered when that panel is the expanded one. Absorbs
+everything `adjust-today.tsx` used to show in a separate sheet — **that file is
+deleted outright**, not deprecated.
+
+**`checkin-view.tsx` rewritten as an orchestrator** — fetches dayparts + active
+goals, computes each daypart's position (`past`/`current`/`future`, by list index
+relative to the current one — `getDayparts()` is already sorted by `sortOrder`, so
+no new date arithmetic was needed), and resolves which panel is expanded.
+
+**Interaction model, simplified from the plan's first sketch during implementation:**
+the plan proposed a CSS-only `:has()`-driven hover mechanism (justified by D41's
+Chrome-only target). Implemented instead with a small amount of hover state in the
+parent — `hoveredId` set on mouse-enter/cleared on mouse-leave of a panel's own
+wrapper, which simply never fires on touch devices, so desktop hover and mobile tap
+need no separate `md:`-gated code paths at all. `openId` is set by a tap on any
+header, cleared by a click outside every panel. Expanded daypart =
+`hoveredId ?? openId ?? currentDaypartId`. Safer than committing to exact `:has()`
+selector behavior with no live browser to verify it in, and costs nothing extra —
+every panel's data already queries regardless of expand state (see below), so
+toggling which one renders its body is a cheap class/conditional change, not a
+requery.
+
+**Every panel queries unconditionally — the same pattern `GoalStatusRow` already
+uses per goal, always.** Four dayparts is a small, fixed set; eagerly running
+`reconcileNow` etc. for all of them is a bounded constant-factor cost, not the
+unbounded-table growth D47 exists to guard against. Deliberately chosen over
+lazy-mounting each body on hover, which would have introduced a "flash of empty
+content while the query resolves" on every single hover.
+
+**The accordion body's open/close is an instant conditional render, not an
+animated height transition** — design.md §6.1 bans animating layout properties
+outright, and a true accordion needs exactly that. Rather than invent a second
+scoped exception to that rule (the desktop nav dock already has one, for its
+hover-expand width), the reveal snaps, same as a native `<details>` element. The
+actual "stunning" surface is the position treatment, which legitimately is
+`transform`/`opacity` only.
+
+**Current/past/future — tint alone, no text, composed from existing tokens (D52),
+no new colours:** current gets `shadow-md ring-1 ring-accent-fill/30` at full
+size/opacity; past and future both shrink to `scale-95 opacity-70`, differing only
+in tint — `neutral` for past (cool, receding), `accent-fill` for future (warm,
+ahead). A translucent background wash, not a blur/`backdrop-filter` — §6.1 bans
+those specifically for Android GPU cost, which a plain tint doesn't carry.
+
+**"Set current" writes to the same `daypartOverride` state the old "Change" picker
+already used** — no new mutation, no new state shape, just a different affordance
+triggering it.
+
+**Gates:** `npx tsc --noEmit`, `npm run lint`, `npm run test` (**217 tests**,
+unchanged — UI needs none per CLAUDE.md, and nothing in a tested module changed),
+`npm run build` — all run and clean, unlike the previous commit in this session
+(the nav/header one), which was made without them at explicit request.
+
+**Not done:**
+- **No browser verification.** The actual feel of hover-expand/collapse, the
+  mobile tap-then-tap-outside-to-close behavior, and whether the tint treatment
+  reads as intended all need a real browser pass — a clean build proves the code
+  compiles, not that the interaction feels right. Owed before this is called done.
+- Decision recorded as **D71** in `docs/DECISIONS.md`, covering both the removal
+  and the redesign, including the specific reasoning for each place this
+  implementation diverged from the plan (interaction model, no-height-animation).
+
+### Addendum — accordion replaced with a single-card carousel, same session, still uncommitted
+
+Requested directly, before any of the above was committed: instead of a vertical
+stack of four dayparts (shrunk/tinted, expand on hover/tap), Today now shows
+**exactly one daypart's card at a time.** The header's name + time range is now
+flanked by two round prev/next arrow buttons that step which daypart is *viewed*,
+independent of which one is actually current. Everything else on the card — stat
+grid, duration field, "Reschedule," sessions, "won't fit" list, tasks — is
+unconditional now: no more expand/collapse, since a carousel only ever shows one
+card fully.
+
+`checkin-view.tsx`'s `hoveredId`/`openId`/`containerRef`/click-outside-listener are
+all gone, replaced by one nullable `viewedId` (`null` = "follow current"), stepped
+by the arrows with wraparound, and reset to `null` by "Set current." Position
+(`current`/`past`/`future`, driving the same tint-only dim treatment as before) is
+now computed by comparing the *viewed* daypart's index to the *current* one's,
+rather than every daypart's index to the current one — there's only ever one card
+on screen to position.
+
+`daypart-panel.tsx` dropped its `expanded`/`onToggle`/`onMouseEnter`/`onMouseLeave`
+props for `onPrev`/`onNext`; the animated `fade-in`/`slide-in` entrance on the old
+accordion body is gone too, since the body no longer mounts/unmounts.
+
+`docs/DECISIONS.md`'s D71 was edited in place (not appended as a new decision) to
+describe the carousel, since the accordion pass it replaced was never committed —
+D71 as recorded now describes what actually shipped.
+
+**Gates re-run after the carousel change:** `npx tsc --noEmit`, `npm run lint`,
+`npm run test` (**217 tests**, unchanged), `npm run build` — all clean.
+
+**Still not done:** no browser verification of the carousel either — arrow-step
+feel, dimmed-card tint on a single viewed card, and mobile layout of the
+arrow/name-time/arrow header row all need a real pass.
