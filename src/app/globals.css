@@ -190,4 +190,25 @@
     opacity: 1 !important;
     transform: none !important;
   }
+
+  .shimmer-glow {
+    animation: none !important;
+  }
+}
+
+@keyframes shimmer-glow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.shimmer-glow {
+  background-size: 200% 200%;
+  animation: shimmer-glow 4s ease infinite;
 }
