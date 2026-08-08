@@ -24,12 +24,14 @@ import { resetTracking } from "@/db/local/mutations";
 import { localNow } from "@/lib/daypart";
 
 export function StartToday() {
+  const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
 
   async function handleConfirm() {
     setLoading(true);
     try {
       await resetTracking(localNow());
+      setOpen(false);
       toast.success("Done. Everything resets from today.");
     } finally {
       setLoading(false);
@@ -37,7 +39,7 @@ export function StartToday() {
   }
 
   return (
-    <AlertDialog>
+    <AlertDialog open={open} onOpenChange={setOpen}>
       <div className="flex flex-col gap-3">
         <p className="text-body text-text-muted">
           Resets all progress and your schedule from today. Your goals and
@@ -65,10 +67,11 @@ export function StartToday() {
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <AlertDialogAction
+            disabled={loading}
             onClick={handleConfirm}
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
           >
-            Reset — I understand
+            {loading ? "Resetting…" : "Reset — I understand"}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
