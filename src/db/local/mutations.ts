@@ -50,6 +50,16 @@ export function newId(): string {
 /** Bookkeeping carried by every mutable synced row (schema.ts `Mutable`). */
 const mutable = (now: IsoDateTime) => ({ updatedAt: now, deletedAt: null });
 
+/**
+ * `putUser` and `putDaypart` take an optional `stampedAt` because the first-run seed
+ * needs a row whose `updatedAt` is **not** the clock (D72). Every other caller omits it
+ * and gets `now`, which is the only correct answer for a real edit.
+ *
+ * The two are genuinely different things, which is why they are separable at all:
+ * `updatedAt` is the row's position in the LWW order, `now` is when this device asked
+ * for it to be sent. A seed row is legitimately ancient and legitimately queued now.
+ */
+
 // ---------------------------------------------------------------------------
 // Mutable rows — small, rarely edited, last-write-wins on `updatedAt` (§6)
 // ---------------------------------------------------------------------------
@@ -57,8 +67,9 @@ const mutable = (now: IsoDateTime) => ({ updatedAt: now, deletedAt: null });
 export async function putUser(
   user: { id: string; email: string | null },
   now: IsoDateTime,
+  stampedAt: IsoDateTime = now,
 ): Promise<LocalUser> {
-  const row: LocalUser = { ...user, ...mutable(now) };
+  const row: LocalUser = { ...user, ...mutable(stampedAt) };
   await localDb.transaction("rw", localDb.users, localDb.outbox, async () => {
     await localDb.users.put(row);
     await enqueue("users", "put", row.id, row, now);
@@ -69,8 +80,9 @@ export async function putUser(
 export async function putDaypart(
   daypart: Daypart,
   now: IsoDateTime,
+  stampedAt: IsoDateTime = now,
 ): Promise<LocalDaypart> {
-  const row: LocalDaypart = { ...daypart, ...mutable(now) };
+  const row: LocalDaypart = { ...daypart, ...mutable(stampedAt) };
   await localDb.transaction("rw", localDb.dayparts, localDb.outbox, async () => {
     await localDb.dayparts.put(row);
     await enqueue("dayparts", "put", row.id, row, now);
@@ -204,10 +216,13 @@ export async function putTask(
  *
  * **Stray (`stageId == null`):** unchanged from D68 — resolves the task, never a log.
  *
- * Known gap (not fixed here): unlike `voluntaryCandidates`, which gates on
- * `maxPerWeek`/`minRestDays` before a catch-up card ever renders, a stage-linked task
- * has no such gate at creation. Several tasks attached to one goal, all marked Done,
- * can produce more voluntary logs in a week than `maxPerWeek` allows.
+ * Known gap (not fixed here): nothing gates a stage-linked task's creation on
+ * `maxPerWeek`/`minRestDays` the way a scheduled slot is gated at layout time.
+ * Several tasks attached to one goal, all marked Done, can produce more voluntary
+ * logs in a week than `maxPerWeek` allows. (The standalone "Log a session" list that
+ * used to enforce this at render time was retired in D71 — D70's attach-a-task path
+ * is the one remaining way to log a voluntary session, and it doesn't inherit that
+ * list's gate.)
  */
 export async function setTaskStatus(
   taskId: string,
